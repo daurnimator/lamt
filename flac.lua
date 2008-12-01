@@ -68,7 +68,7 @@ function info ( fd )
 				t = vstruct.unpack ( "< u4" , fd )
 				vendor_length = t [ 1 ]
 				t = vstruct.unpack ( "< s" .. vendor_length .. "u4" , fd )
-				vendor_string = t [ 1 ]
+				item.extra.vendor_string = t [ 1 ]
 				user_comment_list_length = t [ 2 ]
 				
 				comment = { }
@@ -113,7 +113,7 @@ end
 function edit ( fd , tags )
 	local item = info ( fd )
 	
-	local vendor_string = ""
+	local vendor_string = item.extra.vendor_string
 	local vendor_length = string.len ( vendor_string )
 	
 	local commentcount = 0
@@ -140,5 +140,10 @@ function edit ( fd , tags )
 	end
 	
 	if space_needed == oldblocksize then
+		-- Write
+	elseif space_needed < oldblocksize then
+		
+	else space_needed > oldblocksize then 
+		-- Look for padding blocks
 	end
 end
