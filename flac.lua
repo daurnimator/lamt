@@ -113,7 +113,7 @@ end
 function edit ( fd , tags )
 	local item = info ( fd )
 	
-	local vendor_string = item.extra.vendor_string
+	local vendor_string = item.extra.vendor_string or "Xiph.Org libVorbis I 20020717"
 	local vendor_length = string.len ( vendor_string )
 	
 	local commentcount = 0
@@ -139,11 +139,19 @@ function edit ( fd , tags )
 		oldblocksize = vstruct.unpack ( "u3" , fd ) [ 1 ]
 	end
 	
-	if space_needed == oldblocksize then
-		-- Write
-	elseif space_needed < oldblocksize then
-		
-	else space_needed > oldblocksize then 
+	if space_needed ~= oldblocksize then
 		-- Look for padding blocks
+		if type ( item.extra.padding ) == "table" then
+			
+		end
+		
+		if space_needed < oldblocksize then
+			
+		else --space_needed > oldblocksize then
+			
+		end
 	end
+	
+	-- Write
+	
 end
