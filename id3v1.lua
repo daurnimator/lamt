@@ -214,7 +214,7 @@ function info ( fd )
 	end
 end
 
-function guessyear ( datestring )
+local function guessyear ( datestring )
 	function twodigityear ( capture )
 		if tonumber ( capture ) < 30 then -- Break on 30s
 			return "20"..capture 
@@ -222,15 +222,11 @@ function guessyear ( datestring )
 		end
 	end
 	local patterns = {
-		".*%f[%d](%d%d%d%d)%f[%D].*" = { matches = 1 , replace = "%1" }, -- MAGICAL FRONTIER PATTERN (undocumented)
-		--"^%W*(%d%d%d%d)%W*$" = { matches = 1 , replace = "%1" }, -- Eg: 2000
-		"^%W*(%d%d)%W*$" = { matches = 1 , replace = twodigityear }, -- Eg: 70 or '70
-		--"^%s*%d%d?%s*[/-%s]%s*%d%d?%s*[/-%s]%s*(%d%d%d%d)%s*$" = { matches = 1 , replace = "%1" }, -- Eg: 12/30/1987
-		"^%s*%d%d?%s*[/-%s]%s*%d%d?%s*[/-%s]%W*(%d%d)%s*$" = { matches = 1 , replace = twodigityear }, -- Eg: 20/4/87
-		--".*Year%W*(%d%d%d%d)%W.-" = { matches = 1 , replace = "%1" }, -- Eg: Year: 1965
-		".*Year%W*(%d%d)%W.-" = { matches = 1 , replace = twodigityear }, -- Eg: Month: October, Year: 69
-		--".*%W(%d%d%d%d)%W*$" = { matches = 1 , replace = "%1" }, -- Eg: 1st Sep 1995
-		".*%W(%d%d)%W*$" = { matches = 1 , replace = twodigityear }, -- Eg: Concert of '97.
+		[".*%f[%d](%d%d%d%d)%f[%D].*"] = { matches = 1 , replace = "%1" }, -- MAGICAL FRONTIER PATTERN (undocumented)
+		["^%W*(%d%d)%W*$"] = { matches = 1 , replace = twodigityear }, -- Eg: 70 or '70
+		["^%s*%d%d?%s*[/-%s]%s*%d%d?%s*[/-%s]%W*(%d%d)%s*$"] = { matches = 1 , replace = twodigityear }, -- Eg: 20/4/87
+		[".*Year%W*(%d%d)%W.-"] = { matches = 1 , replace = twodigityear }, -- Eg: Month: October, Year: 69
+		[".*%W(%d%d)%W*$"] = { matches = 1 , replace = twodigityear }, -- Eg: Concert of '97.
 	}
 	for k , v in pairs ( patterns ) do
 		local s , m = string.gsub ( datestring , k , v.replace )
@@ -239,7 +235,7 @@ function guessyear ( datestring )
 	return false
 end
 
-function settolength ( str , tolength )
+local function settolength ( str , tolength )
 	str = string.sub ( str , 1 , tolength )
 	return str .. string.rep ( "\0" , tolength-#str )
 end
@@ -255,6 +251,7 @@ function edit ( fd , tags , inherit )
 		title = tags.title
 	elseif inherit and type ( item.title ) == "table" then 
 		title = item.title
+	else title = { "" }
 	end
 	title = settolength ( title [ 1 ] , 30 )
 	
@@ -264,6 +261,7 @@ function edit ( fd , tags , inherit )
 			t= tags.artist
 		elseif inherit and type ( item.artist ) == "table" then 
 			t= item.artist
+		else artist = { "" }
 		end
 		artist = string.sub ( t [ 1 ] , 1 , 30 )
 		for i=2 , #t do
@@ -278,6 +276,7 @@ function edit ( fd , tags , inherit )
 		album = tags.album
 	elseif inherit and type ( item.album ) == "table" then 
 		album = item.album
+	else album = { "" }
 	end
 	album = settolength ( album [ 1 ] , 30 )
 
@@ -286,30 +285,41 @@ function edit ( fd , tags , inherit )
 		year = tags.date
 	elseif inherit and type ( item.date ) == "table" then 
 		year = item.date
+	else year = { "" }
 	end
-	year = settolength ( guessyear( year ) , 4 )
+	year = settolength ( ( guessyear( year [ 1 ] ) or "" ) , 4 )
 	
 	-- Comment
 	-- No one likes 28 character comments
 	comment = ""
-	settolength ( comment , 28 )
+	comment = settolength ( comment , 28 )
 
+	-- Track
+	if type( tags.track ) == "table" then 
+		track = tags.track
+	elseif inherit and type ( item.track ) == "table" then 
+		track = item.track
+	else track = { "" }
+	end
+	track = string.char ( tonumber ( track [ 1 ] ) or 0 )
+	
 	-- Genre
 	if type( tags.genre ) == "table" then 
 		genre = tags.genre [ 1 ]
 	elseif inherit and type ( item.genre ) == "table" then 
 		genre = item.genre [ 1 ]
+	else genre = { "" }
 	end
 	do
 		local t = 12
 		for i , v in ipairs ( genreindex ) do
-			if string.find ( string.lower( genre ) , string.gsub( string.lower ( v ) , "%W" , "%W" ) ) then genre = i break end 
+			if string.find ( string.lower ( genre [ 1 ] ) , string.gsub ( string.lower ( v ) , "%W" , "%W" ) ) then genre = i break end 
 		end
-		genre = t
+		genre = string.char ( t )
 	end
 	
 	print( title , artist , album, year , comment , track , genre)
-	local id3 = "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre
+	local id3 = string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
+	print (id3,string.len(id3))
 	assert(#id3 == 128)
-	print (id3,#id3)
 end
