@@ -9,9 +9,9 @@
 	You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ]]
 
-module ( "lomp.fileinfo.flac" , package.seeall )
-
 require "general"
+
+module ( "lomp.fileinfo.flac" , package.see ( lomp ) )
 
 require "vstruct"
 
@@ -20,8 +20,7 @@ _NAME = "FLAC reader"
 function info ( fd )
 	fd:seek ( "set" ) -- Rewind file to start
 	-- Format info found at http://flac.sourceforge.net/format.html
-	local s = fd:read ( 4 )
-	if s == "fLaC" then 
+	if fd:read ( 4 ) == "fLaC" then 
 		local item = { format = "flac" , extra = { } }
 		
 		local t
@@ -65,13 +64,16 @@ function info ( fd )
 			elseif blocktype == 4 then -- Vorbis_Comment http://www.xiph.org/vorbis/doc/v-comment.html
 				item.tagtype = "vorbis"
 				item.extra.startvorbis = fd:seek ( ) - 4
+				
+				require "modules.fileinfo.vorbiscomments"
+				
 				t = vstruct.unpack ( "< u4" , fd )
 				vendor_length = t [ 1 ]
 				t = vstruct.unpack ( "< s" .. vendor_length .. "u4" , fd )
 				item.extra.vendor_string = t [ 1 ]
 				user_comment_list_length = t [ 2 ]
 				
-				comment = { }
+				local comment = { }
 				for i = 1 , ( user_comment_list_length ) do
 					t = vstruct.unpack ( "< u4" , fd )
 					local length = t [ 1 ]
