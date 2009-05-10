@@ -96,7 +96,7 @@ local genreindex = {
 	[77] = "Musical" ,
 	[78] = "Rock & Roll" ,
 	[79] = "Hard Rock" ,
-	[-- From here on are not in the official spec,but are widely supported (added by winamp)" ,
+	-- From here on are not in the official spec,but are widely supported (added by winamp)"
 	[80] = "Folk" ,
 	[81] = "Folk-Rock" ,
 	[82] = "National Folk" ,
@@ -153,20 +153,7 @@ local speedindex = {
 }
 
 local function readstring ( fd , length )
-	local fin = fd:seek ( "cur" , length ) -- Get offset of end of string area
-	local endstring
-	for i = 1 , length do -- Work backwards from end of string, stopping when you get to the first character.
-		fd:seek ( fin  , -i )
-		local c = fd:read ( 1 )
-		if c ~= "\0" and c ~= " " then -- Some older programs padded with space instead of binary zero
-			endstring = length - i
-			fd:seek ( fin , - length ) -- Seek to start of string area
-			break
-		end
-	end
-	local result = fd:read ( endstring )
-	fd:seek ( fin + 1 ) -- Seek past end of string area.
-	return result , endstring
+	return string.gsub ( fd:read ( length ) , "[%s ]*$" , "" )
 end
 
 function info ( fd )
@@ -181,7 +168,6 @@ function info ( fd )
 		item.tags.title = { readstring ( fd , 30 ) } 
 		item.tags.artist = { readstring ( fd , 30 ) } 
 		item.tags.album = { readstring ( fd , 30 ) } 
-		item.tags.title = { readstring ( fd , 30 ) }
 		item.tags.date = { readstring ( fd , 4 ) }
 		
 		do -- ID3v1 vs ID3v1.1
@@ -211,12 +197,12 @@ function info ( fd )
 			item.tags.genre [ 2 ] = readstring ( fd , 30 )
 			do
 				local start = readstring ( fd , 30 )
-				if #start = 6 and start:sub ( 4 , 4 ) == ":" then
-					item.tags.start-time = { tostring ( tonumber ( start:sub ( 1 , 3 ) ) * 60 + start:sub ( 5 , 6 ) }
+				if #start == 6 and start:sub ( 4 , 4 ) == ":" then
+					item.tags["start-time"] = { tostring ( tonumber ( start:sub ( 1 , 3 ) ) * 60 + start:sub ( 5 , 6 ) ) }
 				end
 				local fin = readstring ( fd , 30 )
-				if #fin = 6 and fin:sub ( 4 , 4 ) == ":" then
-					item.tags.end-time = { tostring ( tonumber ( fin:sub ( 1 , 3 ) ) * 60 + fin:sub ( 5 , 6 ) }
+				if #fin == 6 and fin:sub ( 4 , 4 ) == ":" then
+					item.tags["end-time"] = { tostring ( tonumber ( fin:sub ( 1 , 3 ) ) * 60 + fin:sub ( 5 , 6 ) ) }
 				end
 			end
 			
@@ -228,8 +214,102 @@ function info ( fd )
 	end
 end
 
-function edit ( fd , tags )
-	local item = info ( fd )
-	if not item then return item end
-		
+function guessyear ( datestring )
+	function twodigityear ( capture )
+		if tonumber ( capture ) < 30 then -- Break on 30s
+			return "20"..capture 
+		else return "19" .. capture
+		end
+	end
+	local patterns = {
+		".*%f[%d](%d%d%d%d)%f[%D].*" = { matches = 1 , replace = "%1" }, -- MAGICAL FRONTIER PATTERN (undocumented)
+		--"^%W*(%d%d%d%d)%W*$" = { matches = 1 , replace = "%1" }, -- Eg: 2000
+		"^%W*(%d%d)%W*$" = { matches = 1 , replace = twodigityear }, -- Eg: 70 or '70
+		--"^%s*%d%d?%s*[/-%s]%s*%d%d?%s*[/-%s]%s*(%d%d%d%d)%s*$" = { matches = 1 , replace = "%1" }, -- Eg: 12/30/1987
+		"^%s*%d%d?%s*[/-%s]%s*%d%d?%s*[/-%s]%W*(%d%d)%s*$" = { matches = 1 , replace = twodigityear }, -- Eg: 20/4/87
+		--".*Year%W*(%d%d%d%d)%W.-" = { matches = 1 , replace = "%1" }, -- Eg: Year: 1965
+		".*Year%W*(%d%d)%W.-" = { matches = 1 , replace = twodigityear }, -- Eg: Month: October, Year: 69
+		--".*%W(%d%d%d%d)%W*$" = { matches = 1 , replace = "%1" }, -- Eg: 1st Sep 1995
+		".*%W(%d%d)%W*$" = { matches = 1 , replace = twodigityear }, -- Eg: Concert of '97.
+	}
+	for k , v in pairs ( patterns ) do
+		local s , m = string.gsub ( datestring , k , v.replace )
+		if m == v.matches then return s end
+	end
+	return false
+end
+
+function settolength ( str , tolength )
+	str = string.sub ( str , 1 , tolength )
+	return str .. string.rep ( "\0" , tolength-#str )
+end
+	
+function edit ( fd , tags , inherit )
+	local item
+	if inherit then item = info ( fd ) end
+	
+	local title , artist , album, year , comment , track , genre
+	
+	-- Title
+	if type( tags.title ) == "table" then 
+		title = tags.title
+	elseif inherit and type ( item.title ) == "table" then 
+		title = item.title
+	end
+	title = settolength ( title [ 1 ] , 30 )
+	
+	do -- Artist
+		local t
+		if type( tags.artist ) == "table" then 
+			t= tags.artist
+		elseif inherit and type ( item.artist ) == "table" then 
+			t= item.artist
+		end
+		artist = string.sub ( t [ 1 ] , 1 , 30 )
+		for i=2 , #t do
+			if ( #artist + 3 + #t [ i ] ) > 30 then break end
+			artist = artist .. " & " .. t [ i ]
+		end
+		artist = settolength ( artist , 30 )
+	end
+	
+	-- Album
+	if type( tags.album ) == "table" then 
+		album = tags.album
+	elseif inherit and type ( item.album ) == "table" then 
+		album = item.album
+	end
+	album = settolength ( album [ 1 ] , 30 )
+
+	-- Year
+	if type( tags.date ) == "table" then 
+		year = tags.date
+	elseif inherit and type ( item.date ) == "table" then 
+		year = item.date
+	end
+	year = settolength ( guessyear( year ) , 4 )
+	
+	-- Comment
+	-- No one likes 28 character comments
+	comment = ""
+	settolength ( comment , 28 )
+
+	-- Genre
+	if type( tags.genre ) == "table" then 
+		genre = tags.genre [ 1 ]
+	elseif inherit and type ( item.genre ) == "table" then 
+		genre = item.genre [ 1 ]
+	end
+	do
+		local t = 12
+		for i , v in ipairs ( genreindex ) do
+			if string.find ( string.lower( genre ) , string.gsub( string.lower ( v ) , "%W" , "%W" ) ) then genre = i break end 
+		end
+		genre = t
+	end
+	
+	print( title , artist , album, year , comment , track , genre)
+	local id3 = "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre
+	assert(#id3 == 128)
+	print (id3,#id3)
 end
