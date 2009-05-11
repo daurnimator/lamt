@@ -161,54 +161,50 @@ function info ( fd )
 	fd:seek ( "end" , -128 ) -- Seek to start of ID3 tag.
 	
 	if fd:read ( 3 ) ==  "TAG" then 
-		local item = { format = "flac" , extra = { } }
-		
-		--item.tagtype = "id3v1"
-		
-		item.tags = { }
-		item.tags.title = { readstring ( fd , 30 ) } 
-		item.tags.artist = { readstring ( fd , 30 ) } 
-		item.tags.album = { readstring ( fd , 30 ) } 
-		item.tags.date = { readstring ( fd , 4 ) }
+		tags = { }
+		tags.title = { readstring ( fd , 30 ) } 
+		tags.artist = { readstring ( fd , 30 ) } 
+		tags.album = { readstring ( fd , 30 ) } 
+		tags.date = { readstring ( fd , 4 ) }
 		
 		do -- ID3v1 vs ID3v1.1
 			local zerobyte = fd:seek ( "cur" , 28 )
 			if fd:read ( 1 ) == "\0" then -- Check if comment is 28 or 30 characters
 				-- Get up to 28 character comment
 				fd:seek ( "cur" , -29 )
-				item.tags.comment = { readstring ( fd , 28 ) }
+				tags.comment = { readstring ( fd , 28 ) }
 				
 				-- Get track number
-				item.tags.tracknumber = { string.byte( fd:read ( 1 ) ) }
+				tags.tracknumber = { string.byte( fd:read ( 1 ) ) }
 			else -- Is ID3v1, could have a 30 character comment tag
 				fd:seek ( "cur" , -29 )
-				item.tags.comment = { readstring ( fd , 30 ) } 
+				tags.comment = { readstring ( fd , 30 ) } 
 			end
 		end
 		
-		item.tags.genre = { genreindex [ tonumber ( string.byte( fd:read ( 1 ) ) ) ] }
+		tags.genre = { genreindex [ tonumber ( string.byte( fd:read ( 1 ) ) ) ] }
 		
 		-- Check for extended tags (Note: these are damn rare, worthwhile supporting them??)
 		fd:seek ( "end" , -355 )
 		if fd:read ( 4 ) == "TAG+" then
-			item.tags.title [ 1 ] = item.tags.title[1] .. readstring ( fd , 60 )
-			item.tags.artist [ 1 ] = item.tags.artist[1] .. readstring ( fd , 60 )
-			item.tags.album [ 1 ] = item.tags.album[1] .. readstring ( fd , 60 )
-			item.tags.speed = { speedindex [ tonumber ( string.byte ( fd:read ( 1 ) ) ) ] }
-			item.tags.genre [ 2 ] = readstring ( fd , 30 )
+			tags.title [ 1 ] = tags.title[1] .. readstring ( fd , 60 )
+			tags.artist [ 1 ] = tags.artist[1] .. readstring ( fd , 60 )
+			tags.album [ 1 ] = tags.album[1] .. readstring ( fd , 60 )
+			tags.speed = { speedindex [ tonumber ( string.byte ( fd:read ( 1 ) ) ) ] }
+			tags.genre [ 2 ] = readstring ( fd , 30 )
 			do
 				local start = readstring ( fd , 30 )
 				if #start == 6 and start:sub ( 4 , 4 ) == ":" then
-					item.tags["start-time"] = { tostring ( tonumber ( start:sub ( 1 , 3 ) ) * 60 + start:sub ( 5 , 6 ) ) }
+					tags["start-time"] = { tostring ( tonumber ( start:sub ( 1 , 3 ) ) * 60 + start:sub ( 5 , 6 ) ) }
 				end
 				local fin = readstring ( fd , 30 )
 				if #fin == 6 and fin:sub ( 4 , 4 ) == ":" then
-					item.tags["end-time"] = { tostring ( tonumber ( fin:sub ( 1 , 3 ) ) * 60 + fin:sub ( 5 , 6 ) ) }
+					tags["end-time"] = { tostring ( tonumber ( fin:sub ( 1 , 3 ) ) * 60 + fin:sub ( 5 , 6 ) ) }
 				end
 			end
 			
 		end
-		return item
+		return tags
 	else
 		-- File doesn't have an ID3v1 Tag
 		return false
@@ -242,16 +238,16 @@ local function settolength ( str , tolength )
 end
 	
 function edit ( fd , tags , inherit )
-	local item
-	if inherit then item = info ( fd ) end
+	local currenttags
+	if inherit then currenttags= info ( fd ) end
 	
 	local title , artist , album, year , comment , track , genre
 	
 	-- Title
 	if type( tags.title ) == "table" then 
 		title = tags.title
-	elseif inherit and type ( item.title ) == "table" then 
-		title = item.title
+	elseif inherit and type ( currenttags.title ) == "table" then 
+		title = currenttags.title
 	else title = { "" }
 	end
 	title = settolength ( title [ 1 ] , 30 )
@@ -260,8 +256,8 @@ function edit ( fd , tags , inherit )
 		local t
 		if type( tags.artist ) == "table" then 
 			t= tags.artist
-		elseif inherit and type ( item.artist ) == "table" then 
-			t= item.artist
+		elseif inherit and type ( currenttags.artist ) == "table" then 
+			t= currenttags.artist
 		else t = { "" }
 		end
 		artist = string.sub ( t [ 1 ] , 1 , 30 )
@@ -275,8 +271,8 @@ function edit ( fd , tags , inherit )
 	-- Album
 	if type( tags.album ) == "table" then 
 		album = tags.album
-	elseif inherit and type ( item.album ) == "table" then 
-		album = item.album
+	elseif inherit and type ( currenttags.album ) == "table" then 
+		album = currenttags.album
 	else album = { "" }
 	end
 	album = settolength ( album [ 1 ] , 30 )
@@ -284,8 +280,8 @@ function edit ( fd , tags , inherit )
 	-- Year
 	if type( tags.date ) == "table" then 
 		year = tags.date
-	elseif inherit and type ( item.date ) == "table" then 
-		year = item.date
+	elseif inherit and type ( currenttags.date ) == "table" then 
+		year = currenttags.date
 	else year = { "" }
 	end
 	year = settolength ( ( guessyear( year [ 1 ] ) or "" ) , 4 )
@@ -298,8 +294,8 @@ function edit ( fd , tags , inherit )
 	-- Track
 	if type( tags.track ) == "table" then 
 		track = tags.track
-	elseif inherit and type ( item.track ) == "table" then 
-		track = item.track
+	elseif inherit and type ( currenttags.track ) == "table" then 
+		track = currenttags.track
 	else track = { "" }
 	end
 	track = string.char ( tonumber ( track [ 1 ] ) or 0 )
@@ -307,8 +303,8 @@ function edit ( fd , tags , inherit )
 	-- Genre
 	if type( tags.genre ) == "table" then 
 		genre = tags.genre [ 1 ]
-	elseif inherit and type ( item.genre ) == "table" then 
-		genre = item.genre [ 1 ]
+	elseif inherit and type ( currenttags.genre ) == "table" then 
+		genre = currenttags.genre [ 1 ]
 	else genre = ""
 	end
 	do

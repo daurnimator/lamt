@@ -21,10 +21,9 @@ function info ( fd )
 	fd:seek ( "set" ) -- Rewind file to start
 	-- Format info found at http://flac.sourceforge.net/format.html
 	if fd:read ( 4 ) == "fLaC" then 
-		local item = { format = "flac" , extra = { } }
+		local item = { format = "flac" , extra = { } , tags = { } }
 		
 		local t
-		local tags = { }
 		repeat
 			t = vstruct.unpack ( "< m1 > u3" , fd )
 			
@@ -66,45 +65,28 @@ function info ( fd )
 				item.extra.startvorbis = fd:seek ( ) - 4
 				
 				require "modules.fileinfo.vorbiscomments"
+				lomp.fileinfo.vorbiscomments.info ( fd , item )
 				
-				t = vstruct.unpack ( "< u4" , fd )
-				vendor_length = t [ 1 ]
-				t = vstruct.unpack ( "< s" .. vendor_length .. "u4" , fd )
-				item.extra.vendor_string = t [ 1 ]
-				user_comment_list_length = t [ 2 ]
-				
-				local comment = { }
-				for i = 1 , ( user_comment_list_length ) do
-					t = vstruct.unpack ( "< u4" , fd )
-					local length = t [ 1 ]
-					t = vstruct.unpack ( "< s" .. length , fd )
-					comment [ i ] = t [ 1 ]
-					local fieldname , value = string.match ( comment [ i ] , "([^=]+)=(.+)")
-					fieldname = string.lower ( fieldname )
-					tags [ fieldname ] = tags [ fieldname ] or { }
-					table.insert ( tags [ fieldname ] , value )
-				end
 			elseif blocktype == 5 then -- Cuesheet
 				t = vstruct.unpack ( "> s128 u8 x259 x1 x" .. ( blocklength - ( 128 + 8 + 259 + 1 ) ) , fd ) -- cbf, TODO: cuesheet reading
 			elseif blocktype == 6 then -- Picture
 				t = vstruct.unpack ( "> u4 u4" , fd )
-				picturetype = t [ 1 ]
-				mimelength = t [ 2 ]
+				local picturetype = t [ 1 ]
+				local mimelength = t [ 2 ]
 				t = vstruct.unpack ( "> s" .. mimelength .. "u4" , fd )
-				mimetype = t [ 1 ]
-				descriptionlength = t [ 2 ]
+				local mimetype = t [ 1 ]
+				local descriptionlength = t [ 2 ]
 				t = vstruct.unpack ( "> s" .. descriptionlength .. " u4 u4 u4 u4 u4" , fd )
-				width = t [ 1 ]
-				height = t [ 2 ]
-				colourdepth = t [ 3 ]
-				numberofcolours = t [ 4 ]
-				picturelength = t [ 5 ]
+				local width = t [ 1 ]
+				local height = t [ 2 ]
+				local colourdepth = t [ 3 ]
+				local numberofcolours = t [ 4 ]
+				local picturelength = t [ 5 ]
 				t = vstruct.unpack ( "> s" .. picturelength , fd )
-				picturedata = t [ 1 ]
+				local picturedata = t [ 1 ]
 			end
 		until lastmetadatablock == 1
 		item.length = math.floor( item.extra.length + 0.5 )
-		item.tags = tags or { }
 		return item
 	else
 		-- not a flac file

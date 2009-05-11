@@ -17,3 +17,23 @@ require "vstruct"
 
 _NAME = "Vorbis comments reader"
 
+-- unpacks a string from file descriptor thats stored in with length (as unsigned 4 byte int) before it
+function getstring ( fd )
+	return vstruct.unpack ( "< s" .. 
+		vstruct.unpack ( "< u4" , fd ) [ 1 ] -- length of string
+	, fd ) [ 1 ]
+end
+
+function info ( fd , item )
+	item.extra = item.extra or { }
+	item.tags = item.tags or { }
+	
+	item.extra.vendor_string = getstring ( fd )
+	
+	for i = 1 , vstruct.unpack ( "< u4" , fd ) [ 1 ] do -- 4 byte interger indicating how many comments.
+		local fieldname , value = string.match ( getstring ( fd ) , "([^=]+)=(.+)")
+		fieldname = string.lower ( fieldname )
+		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
+		table.insert ( item.tags [ fieldname ] , value )
+	end
+end
