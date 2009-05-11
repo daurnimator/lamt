@@ -153,7 +153,8 @@ local speedindex = {
 }
 
 local function readstring ( fd , length )
-	return string.gsub ( fd:read ( length ) , "[%s ]*$" , "" )
+	local str = string.gsub ( fd:read ( length ) , "[%s ]*$" , "" )
+	return str
 end
 
 function info ( fd )
@@ -261,10 +262,10 @@ function edit ( fd , tags , inherit )
 			t= tags.artist
 		elseif inherit and type ( item.artist ) == "table" then 
 			t= item.artist
-		else artist = { "" }
+		else t = { "" }
 		end
 		artist = string.sub ( t [ 1 ] , 1 , 30 )
-		for i=2 , #t do
+		for i=2 , #t-1 do
 			if ( #artist + 3 + #t [ i ] ) > 30 then break end
 			artist = artist .. " & " .. t [ i ]
 		end
@@ -308,18 +309,27 @@ function edit ( fd , tags , inherit )
 		genre = tags.genre [ 1 ]
 	elseif inherit and type ( item.genre ) == "table" then 
 		genre = item.genre [ 1 ]
-	else genre = { "" }
+	else genre = ""
 	end
 	do
 		local t = 12
 		for i , v in ipairs ( genreindex ) do
-			if string.find ( string.lower ( genre [ 1 ] ) , string.gsub ( string.lower ( v ) , "%W" , "%W" ) ) then genre = i break end 
+			if string.find ( string.lower ( genre ) , string.gsub ( string.lower ( v ) , "%W" , "%W" ) ) then genre = i break end 
 		end
 		genre = string.char ( t )
 	end
-	
-	print( title , artist , album, year , comment , track , genre)
-	local id3 = string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
-	print (id3,string.len(id3))
+	local id3 = "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre -- String format doesn't like \0. --string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
 	assert(#id3 == 128)
+	
+	-- Check if file already has an ID3 tag
+	local ok , fail = fd:seek ( "end" , -128 ) -- Seek to start of ID3 tag.
+	if not ok then return ok , fail end
+	if fd:read ( 3 ) ==  "TAG" then 
+		fd:seek ( "cur" , -3 )
+	else -- If file has no id3v1 tag, make tag at end of file
+		fd:seek ( "end" )
+	end
+	local ok , err = fd:write ( id3 )
+	if not ok then return ok , fail end
+	return fd:flush ( )
 end
