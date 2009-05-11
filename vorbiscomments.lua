@@ -11,28 +11,21 @@
 
 require "general"
 
-module ( "lomp.fileinfo.vorbiscomments" , package.see ( lomp ) )
+module ( "lomp.fileinfo.vorbiscomments" , package.seeall )
 
 require "vstruct"
 
 _NAME = "Vorbis comment tag reader/writer"
 -- Vorbis_Comment http://www.xiph.org/vorbis/doc/v-comment.html
 
--- unpacks a string from file descriptor thats stored in with length (as unsigned 4 byte int) before it
-local function getstring ( fd )
-	return vstruct.unpack ( "< s" .. 
-		vstruct.unpack ( "< u4" , fd ) [ 1 ] -- length of string
-	, fd ) [ 1 ]
-end
-
 function info ( fd , item )
 	item.extra = item.extra or { }
 	item.tags = item.tags or { }
 	
-	item.extra.vendor_string = getstring ( fd )
+	item.extra.vendor_string = vstruct.unpack ( "< c4" , fd ) [ 1 ]
 	
 	for i = 1 , vstruct.unpack ( "< u4" , fd ) [ 1 ] do -- 4 byte interger indicating how many comments.
-		local fieldname , value = string.match ( getstring ( fd ) , "([^=]+)=(.+)")
+		local fieldname , value = string.match ( vstruct.unpack ( "< c4" , fd ) [ 1 ] , "([^=]+)=(.+)")
 		fieldname = string.lower ( fieldname )
 		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
 		table.insert ( item.tags [ fieldname ] , value )
