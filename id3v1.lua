@@ -157,8 +157,18 @@ local function readstring ( fd , length )
 	return str
 end
 
-function info ( fd )
-	fd:seek ( "end" , -128 ) -- Seek to start of ID3 tag.
+function find ( fd )
+	fd:seek ( "end" , -128 ) -- Look at end of file
+	if fd:read ( 3 ) == "TAG" then
+		return fd:seek ( "end" , -128 )
+	else
+		return false
+	end
+end
+
+function info ( fd , offset )
+	--  offset should always be (size of file-128)
+	if offset then fd:seek ( "set" , offset ) end
 	
 	if fd:read ( 3 ) ==  "TAG" then 
 		tags = { }
@@ -236,18 +246,14 @@ local function settolength ( str , tolength )
 	str = string.sub ( str , 1 , tolength )
 	return str .. string.rep ( "\0" , tolength-#str )
 end
-	
-function edit ( fd , tags , inherit )
-	local currenttags
-	if inherit then currenttags= info ( fd ) end
+
+function generatetag ( tags )
 	
 	local title , artist , album, year , comment , track , genre
 	
 	-- Title
 	if type( tags.title ) == "table" then 
 		title = tags.title
-	elseif inherit and type ( currenttags.title ) == "table" then 
-		title = currenttags.title
 	else title = { "" }
 	end
 	title = settolength ( title [ 1 ] , 30 )
@@ -256,8 +262,6 @@ function edit ( fd , tags , inherit )
 		local t
 		if type( tags.artist ) == "table" then 
 			t= tags.artist
-		elseif inherit and type ( currenttags.artist ) == "table" then 
-			t= currenttags.artist
 		else t = { "" }
 		end
 		artist = string.sub ( t [ 1 ] , 1 , 30 )
@@ -271,8 +275,6 @@ function edit ( fd , tags , inherit )
 	-- Album
 	if type( tags.album ) == "table" then 
 		album = tags.album
-	elseif inherit and type ( currenttags.album ) == "table" then 
-		album = currenttags.album
 	else album = { "" }
 	end
 	album = settolength ( album [ 1 ] , 30 )
@@ -280,8 +282,6 @@ function edit ( fd , tags , inherit )
 	-- Year
 	if type( tags.date ) == "table" then 
 		year = tags.date
-	elseif inherit and type ( currenttags.date ) == "table" then 
-		year = currenttags.date
 	else year = { "" }
 	end
 	year = settolength ( ( guessyear( year [ 1 ] ) or "" ) , 4 )
@@ -294,8 +294,6 @@ function edit ( fd , tags , inherit )
 	-- Track
 	if type( tags.track ) == "table" then 
 		track = tags.track
-	elseif inherit and type ( currenttags.track ) == "table" then 
-		track = currenttags.track
 	else track = { "" }
 	end
 	track = string.char ( tonumber ( track [ 1 ] ) or 0 )
@@ -303,8 +301,6 @@ function edit ( fd , tags , inherit )
 	-- Genre
 	if type( tags.genre ) == "table" then 
 		genre = tags.genre [ 1 ]
-	elseif inherit and type ( currenttags.genre ) == "table" then 
-		genre = currenttags.genre [ 1 ]
 	else genre = ""
 	end
 	do
@@ -314,7 +310,20 @@ function edit ( fd , tags , inherit )
 		end
 		genre = string.char ( t )
 	end
-	local id3 = "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre -- String format doesn't like \0. --string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
+	return "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre -- String format doesn't like \0. --string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
+end
+
+function edit ( fd , tags , inherit )
+	if inherit then 
+		local currenttags= info ( fd ) -- inherit from current data
+		for k , v in pairs ( currenttags ) do
+			for i , v in ipairs ( v ) do
+				table.insert ( tags [ k ] , v )
+			end
+		end
+	end
+	
+	local id3 = generatetag ( tags )
 	assert(#id3 == 128)
 	
 	-- Check if file already has an ID3 tag

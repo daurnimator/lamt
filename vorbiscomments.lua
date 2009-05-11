@@ -15,10 +15,11 @@ module ( "lomp.fileinfo.vorbiscomments" , package.see ( lomp ) )
 
 require "vstruct"
 
-_NAME = "Vorbis comments reader"
+_NAME = "Vorbis comment tag reader/writer"
+-- Vorbis_Comment http://www.xiph.org/vorbis/doc/v-comment.html
 
 -- unpacks a string from file descriptor thats stored in with length (as unsigned 4 byte int) before it
-function getstring ( fd )
+local function getstring ( fd )
 	return vstruct.unpack ( "< s" .. 
 		vstruct.unpack ( "< u4" , fd ) [ 1 ] -- length of string
 	, fd ) [ 1 ]
@@ -36,4 +37,28 @@ function info ( fd , item )
 		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
 		table.insert ( item.tags [ fieldname ] , value )
 	end
+end
+
+function generatetag ( tags )
+	local vendor_string = core._PROGRAM .. " " .. _NAME
+	
+	local vstructstring = "< "
+	local vstructdata = { }
+	
+	vstructstring  = vstructstring  .. "{ u4 s } "
+	table.insert ( vstructdata , { #vendor_string , vendor_string } )
+	
+	local commenttbl = { }
+	for k , v in pairs ( tags ) do
+		k = string.lower (  string.gsub ( k , "=" , "" ) ) -- Remove any equals signs, change to lowercase
+		for i , v in ipairs ( v ) do
+			local str = k .."="..v
+			table.insert ( commenttbl ,  { #str , str } )
+		end
+	end
+	vstructstring = vstructstring .. "u4 { " .. #commenttbl .. " * { u4 s } } "
+	table.insert ( vstructdata , #commenttbl )
+	table.insert ( vstructdata , commenttbl )
+	
+	return vstruct.pack ( vstructstring , vstructdata )
 end

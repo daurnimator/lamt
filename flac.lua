@@ -17,11 +17,20 @@ require "vstruct"
 
 _NAME = "FLAC reader"
 
-function info ( fd )
+function find ( fd )
+	fd:seek ( "set" ) -- Rewind file to start
+	if fd:read ( 4 ) == "fLaC" then 
+		return fd:seek ( "set" )
+	end
+end
+
+function info ( fd , item )
 	fd:seek ( "set" ) -- Rewind file to start
 	-- Format info found at http://flac.sourceforge.net/format.html
 	if fd:read ( 4 ) == "fLaC" then 
-		local item = { format = "flac" , extra = { } , tags = { } }
+		item.format = "flac"
+		item.extra = { } 
+		item.tags = { }
 		
 		local t
 		repeat
@@ -60,8 +69,8 @@ function info ( fd )
 				table.insert ( item.extra.applications , { appID = t [ 1 ] , appdata = t [ 2 ] } )
 			elseif blocktype == 3 then -- Seektable
 				t = vstruct.unpack ( "> x" .. blocklength , fd ) -- We don't deal with seektables, skip over it
-			elseif blocktype == 4 then -- Vorbis_Comment http://www.xiph.org/vorbis/doc/v-comment.html
-				item.tagtype = "vorbis"
+			elseif blocktype == 4 then
+				item.tagtype = "vorbiscomment"
 				item.extra.startvorbis = fd:seek ( ) - 4
 				
 				require "modules.fileinfo.vorbiscomments"
