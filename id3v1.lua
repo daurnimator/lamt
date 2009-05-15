@@ -13,6 +13,14 @@ require "general"
 
 module ( "lomp.fileinfo.id3v1" , package.see ( lomp ) )
 
+pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
+require "iconv"
+
+local Locale = "ISO-8859-1"
+
+local toid3 = iconv.new ( Locale , "UTF-8" )
+local fromid3 = iconv.new ( "UTF-8" , Locale )
+
 _NAME = "ID3v1 tag utils"
 
 local genreindex = {
@@ -154,7 +162,7 @@ local speedindex = {
 
 local function readstring ( fd , length )
 	local str = string.gsub ( fd:read ( length ) , "[%s ]*$" , "" )
-	return str
+	return fromid3:iconv ( str )
 end
 
 function find ( fd )
@@ -242,7 +250,8 @@ local function guessyear ( datestring )
 	return false
 end
 
-local function settolength ( str , tolength )
+local function makestring ( str , tolength )
+	str = toid3:iconv ( str )
 	str = string.sub ( str , 1 , tolength )
 	return str .. string.rep ( "\0" , tolength-#str )
 end
@@ -256,7 +265,7 @@ function generatetag ( tags )
 		title = tags.title
 	else title = { "" }
 	end
-	title = settolength ( title [ 1 ] , 30 )
+	title = makestring ( title [ 1 ] , 30 )
 	
 	do -- Artist
 		local t
@@ -269,7 +278,7 @@ function generatetag ( tags )
 			if ( #artist + 3 + #t [ i ] ) > 30 then break end
 			artist = artist .. " & " .. t [ i ]
 		end
-		artist = settolength ( artist , 30 )
+		artist = makestring ( artist , 30 )
 	end
 	
 	-- Album
@@ -277,19 +286,19 @@ function generatetag ( tags )
 		album = tags.album
 	else album = { "" }
 	end
-	album = settolength ( album [ 1 ] , 30 )
+	album = makestring ( album [ 1 ] , 30 )
 
 	-- Year
 	if type( tags.date ) == "table" then 
 		year = tags.date
 	else year = { "" }
 	end
-	year = settolength ( ( guessyear( year [ 1 ] ) or "" ) , 4 )
+	year = makestring ( ( guessyear( year [ 1 ] ) or "" ) , 4 )
 	
 	-- Comment
 	-- No one likes 28 character comments
 	comment = ""
-	comment = settolength ( comment , 28 )
+	comment = makestring ( comment , 28 )
 
 	-- Track
 	if type( tags.track ) == "table" then 
@@ -300,7 +309,7 @@ function generatetag ( tags )
 	
 	-- Genre
 	if type( tags.genre ) == "table" then 
-		genre = tags.genre [ 1 ]
+		genre = toid3:iconv ( tags.genre [ 1 ] )
 	else genre = ""
 	end
 	do
