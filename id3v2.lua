@@ -50,18 +50,18 @@ local framedecode = {
 	["UFID"] = function ( str )
 			return vstruct.unpack ( "> owner_identifier:zW identifier:s64" , str )
 		end ,
-	["TIT1"] function ( str ) -- Content group description
+	["TIT1"] = function ( str ) -- Content group description
 			local t = vstruct.unpack ( "> encoding:u1" , str )
 			--local encoding = 
 			return 
 		end ,
-	["TIT2"] function ( str ) -- Title
+	["TIT2"] = function ( str ) -- Title
 			return
 		end ,
-	["TIT3"] function ( str ) -- Sub Title
+	["TIT3"] = function ( str ) -- Sub Title
 			return
 		end ,
-	["TALB"] function ( str ) -- Source
+	["TALB"] = function ( str ) -- Source
 			return
 		end ,
 	
