@@ -24,8 +24,8 @@ _NAME = "ID3v2 tag reader/writer"
 local function desafesync ( tbl )
 	local new = { }
 	for i = 1 , #tbl do
-		if i % 8 ~= 0 then
-			table.insert ( new , tbl [ i ] )
+		if (i-1) % 8 ~= 0 then
+			table.insert ( new , tbl [ j ] )
 		end
 	end
 	return vstruct.implode ( new )
@@ -547,12 +547,10 @@ local function readframe ( fd , header )
 	if t.id == "\0\0\0\0" then -- padding
 		return false , "padding"
 	else
-		--print("SAFESYNC" , vstruct.implode ( t.safesyncsize ) , unpack ( t.safesyncsize ) )
-		t.framesize = vstruct.implode ( t.safesyncsize ) -- No desafesync?
+		t.framesize = vstruct.implode ( t.safesyncsize )
 		t.size = t.framesize
-		--print("DESAFESYNC" , t.size , unpack ( vstruct.explode ( t.size ) ) )
-		t.safesyncsize = nil
 		if header.version == 4 then	
+			t.size = desafesync ( t.safesyncsize )
 			-- %0abc0000 %0h00kmnp
 			t.tagalterpreserv = t.statusflags [ 7 ]
 			t.filealterpreserv = t.statusflags [ 6 ]
@@ -566,6 +564,8 @@ local function readframe ( fd , header )
 			if t.encrypted then t.encryption = fd:read ( 1 ) end
 			if t.hasdatalength then t.datalength = fd:read ( 4 ) end
 		elseif header.version <= 3 then
+			t.size = t.framesize
+			-- %abc00000 %ijk00000 
 			t.tagalterpreserv = t.statusflags [ 8 ]
 			t.filealterpreserv = t.statusflags [ 7 ]
 			t.readonly = t.statusflags [ 6 ]
@@ -585,6 +585,8 @@ local function readframe ( fd , header )
 				t.groupingbyte = fd:read ( 1 ) 
 			end
 		end
+		t.safesyncsize = nil
+		
 		t.framecontents = fd:read ( t.size )
 		t.contents = t.framecontents
 		if t.unsynched then
@@ -631,7 +633,7 @@ function info ( fd , location , item )
 	local header = readheader ( fd )
 	if header then
 		item.tags = { }
-		item.extra = { }
+		item.extra = { id3v2version = header.version }
 		local i = 0
 		while i < ( header.size - 10) do
 			local ok , err = readframe ( fd , header )
