@@ -542,9 +542,11 @@ local framedecode = {
 	end ,
 }
 
-local function readframe ( fd , header )
+-- Read 10 byte frame header
+local function readframeheader ( fd , header )
 	local t = vstruct.unpack ( "> id:s4 safesyncsize:m4 statusflags:m1 formatflags:m1" , fd )
 	if t.id == "\0\0\0\0" then -- padding
+		fd:seek ( "cur" , -10 ) -- Rewind to what would have been start of frame
 		return false , "padding"
 	else
 		t.framesize = vstruct.implode ( t.safesyncsize )
@@ -585,31 +587,42 @@ local function readframe ( fd , header )
 				t.groupingbyte = fd:read ( 1 ) 
 			end
 		end
+		t.startcontent = fd:seek ( "cur" )
+		t.startheader = fd:seek ( "cur" , -10 )
 		t.safesyncsize = nil
-		
-		t.framecontents = fd:read ( t.size )
+		return t
+	end
+end
+local function readframe ( fd , header )
+	local ok , err = readframeheader ( fd , header )
+	if ok then
+		local t = { }
+		fd:seek ( ok.startcontent )
+		t.framecontents = fd:read ( ok.size )
 		t.contents = t.framecontents
-		if t.unsynched then
+		if ok.unsynched then -- Unsynch-safe the frame content
 			t.contents = t.contents:gsub ( "\255%z([224-\255])" ,  "\255%1" )
 				:gsub ( "\255%z%z" ,  "\255\0" )
 		end
-		if t.encrypted then
+		if ok.encrypted then
 			return false , "Encrypted frame, cannot decrypt"
 		end
-		if t.compressed then -- Frame compressed with zlib
-			local ok , z = pcall ( require , "zlib" )
-			if ok and z then
+		if ok.compressed then -- Frame compressed with zlib
+			local zlibok , z = pcall ( require , "zlib" )
+			if zlibok and z then
 				t.contents = z.decompress ( t.contents )
 			else
 				return false , "Compressed frame and no zlib available"
 			end
 		end
-		if framedecode [ t.id ] then
-			return framedecode [ t.id ] ( t.contents )
+		if framedecode [ ok.id ] then
+			return t , framedecode [ ok.id ] ( t.contents )
 		else -- We don't know of this frame type
-			print ( "Unknown frame" , t.id , t.size , t.contents )
+			print ( "Unknown frame" , ok.id , ok.size , t.contents )
 			return { }
 		end
+	else
+		return ok , err
 	end
 end
 
@@ -637,13 +650,11 @@ function info ( fd , location , item )
 		local i = 0
 		while i < ( header.size - 10) do
 			local ok , err = readframe ( fd , header )
-			if err == "padding" then
-				break
-			else
-				ok = ok or { }
-				--print ( table.recurseserialise ( ok ) )
-				table.inherit ( item.tags , ok , true )
+			if ok then
+				table.inherit ( item.tags , err , true )
 				i = fd:seek ( "cur" ) - header.firstframeoffset
+			elseif err == "padding" then
+				break
 			end
 		end
 		return item
@@ -652,8 +663,41 @@ function info ( fd , location , item )
 	end
 end
 
-function generatetag ( tags )
-
+function generatetag ( tags , fd , footer )
+	local t
+	if io.type ( fd ) then -- Get existing tag
+		fd:seek ( "set" , location )
+		local header = readheader ( fd )
+		if header then
+			t = { }
+			while i < ( header.size - 10) do
+				local ok , err = readframeheader ( fd , header )
+				if err == "padding" then
+					break
+				else
+					print ( table.recurseserialise ( ok ) )
+					
+					if ok.tagalterpreserv then
+					t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
+					--elseif then
+					
+					else
+						fd:seek ( "cur" , ok.size )
+					end
+					
+					i = fd:seek ( "cur" ) - header.firstframeoffset
+				end
+			end
+			t.paddingstart = fd:seek ( "cur" )
+			t.paddingend = t.paddingstart - location + header.size
+		end
+	end
+	if not t then -- New tag from scratch
+		t = { }
+	end
+	
+	-- Generate header
+	
 end
 
 function edit ( )
