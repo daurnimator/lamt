@@ -205,10 +205,13 @@ local encodings = {
 local function readtextframe ( str )
 	local t = vstruct.unpack ( "> encoding:u1 text:s" .. #str , str )
 	local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) )
+	local r = { }
 	for i , v in ipairs ( st ) do
-		st [ i ] = utf8 ( v , encodings [ t.encoding ].name )
+		if #v ~= 0 then
+			r [ #r + 1 ] = utf8 ( v , encodings [ t.encoding ].name )
+		end
 	end
-	return st
+	return r
 end
 
 local framedecode = {
@@ -237,6 +240,7 @@ local framedecode = {
 			local track , total = { } , { }
 			for i , v in ipairs ( readtextframe ( str ) ) do
 				track [ #track + 1 ] , total [ #total + 1 ] = string.match ( v , "([^/]*)/?(.*)" )
+				if total [ #total ] == "" then total [ #total ] = nil end -- string match still fills in the total array
 			end
 			return { [ "tracknumber" ] = track , ["totaltracks"] = total }
 		end ,
@@ -347,7 +351,7 @@ local framedecode = {
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local m = string.match ( v , "(%d%d%d%d)%s" )
 			if m then 
-				c [ #c ] = "Copyright " .. m
+				c [ #c + 1 ] = "Copyright " .. m
 			end
 		end
 		return { [ "copyright" ] =  c }
@@ -357,7 +361,7 @@ local framedecode = {
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local m = string.match ( v , "(%d%d%d%d)%s" )
 			if m then 
-				p [ #p ] = "Produced " .. m
+				p [ #p + 1 ] = "Produced " .. m
 			end
 		end
 		return { [ "produced" ] =p }
@@ -418,10 +422,13 @@ local framedecode = {
 		local t = vstruct.unpack ( "> encoding:u1 field:z text:s" .. #str , str )
 		t.text = string.match ( t.text  , "^%z*(.*)" ) or "" -- Strip any leading nulls
 		local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) )
+		local r = { }
 		for i , v in ipairs ( st ) do
-			st [ i ] = utf8 ( v , encodings [ t.encoding ].name )
+			if #v ~= 0 then
+				r [ #r + 1 ] = utf8 ( v , encodings [ t.encoding ].name )
+			end
 		end
-		return { [ t.field ] =  st }
+		return { [ string.lower ( t.field ) ] =  r }
 	end ,
 	
 	-- URL fields,
@@ -452,7 +459,7 @@ local framedecode = {
 	["WXXX"] = function ( str ) -- Custom
 		local t = vstruct.unpack ( "> field:z url:s" .. #str , str )
 		t.url = string.match ( t.url  , "^%z*(.*)" ) or "" -- Strip any leading nulls
-		return { [ t.url ] =  st }
+		return { [ string.lower ( t.url ) .. " url" ] =  st }
 	end ,	
 	
 	-- Music CD identifier
