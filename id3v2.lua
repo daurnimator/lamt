@@ -203,7 +203,7 @@ local encodings = {
 }
 
 local function readtextframe ( str )
-	local t = vstruct.unpack ( "> encoding:u1 text:s" .. #str , str )
+	local t = vstruct.unpack ( "> encoding:u1 text:s" .. #str - 1 , str )
 	local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) )
 	local r = { }
 	for i , v in ipairs ( st ) do
@@ -419,8 +419,8 @@ local framedecode = {
 	end ,
 	-- Special case, TXXX
 	["TXXX"] = function ( str ) -- Custom text frame
-		local t = vstruct.unpack ( "> encoding:u1 field:z text:s" .. #str , str )
-		t.text = string.match ( t.text  , "^%z*(.*)" ) or "" -- Strip any leading nulls
+		local t = vstruct.unpack ( "> encoding:u1 field:z text:s" .. #str - 2 , str )
+		t.text = string.match ( t.text or ""  , "^%z*(.*)" ) or "" -- Strip any leading nulls
 		local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) )
 		local r = { }
 		for i , v in ipairs ( st ) do
@@ -457,9 +457,9 @@ local framedecode = {
 		return { ["publisher url"] = { str } }
 	end ,
 	["WXXX"] = function ( str ) -- Custom
-		local t = vstruct.unpack ( "> field:z url:s" .. #str , str )
-		t.url = string.match ( t.url  , "^%z*(.*)" ) or "" -- Strip any leading nulls
-		return { [ string.lower ( t.url ) .. " url" ] =  st }
+		local t = vstruct.unpack ( "> field:z url:s" .. #str - 1 , str )
+		t.url = string.match ( t.url  or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
+		return { [ string.lower ( t.field ) .. " url" ] =  t.url }
 	end ,	
 	
 	-- Music CD identifier
@@ -473,7 +473,7 @@ local framedecode = {
 	
 	-- Unsynchronised lyrics/text transcription
 	["USLT"] = function ( str )
-		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str , str )
+		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str - 5 , str )
 		t.text = string.match ( t.text  or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
 		-- TODO: Can we do anything with language or description?
 		return { [ "lyrics" ] = { t.text } }
@@ -483,7 +483,7 @@ local framedecode = {
 	
 	-- Comment
 	["COMM"] = function ( str )
-		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str , str )
+		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str - 5 , str )
 		t.text = string.match ( t.text or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
 		-- TODO: Can we do anything with language or description?
 		return { [ "comment" ] = { t.text } }
@@ -497,6 +497,7 @@ local framedecode = {
 	--["APIC"] = function ( str )
 		-- TODO: interpret pictures
 	--end ,
+	
 	-- GEOB -- General encapsulated object
 
 	-- PCNT -- Play counter
@@ -512,7 +513,7 @@ local framedecode = {
 	
 	-- Terms of use frame
 	["USER"] = function ( str )
-		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str , str )
+		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str - 5 , str )
 		t.text = string.match ( t.text or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
 		-- TODO: Can we do anything with language or description?
 		return { [ "terms of use" ] = { t.text } }
@@ -643,7 +644,6 @@ function info ( fd , location , item )
 				i = fd:seek ( "cur" ) - header.firstframeoffset
 			end
 		end
-		print ( table.recurseserialise ( item ) )	
 		return item
 	else
 		return false
