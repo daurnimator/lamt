@@ -924,7 +924,6 @@ function generatetag ( tags , fd , footer )
 			end
 		end
 	end
-	print(table.serialise(newframes))
 	-- Check for doubled up frames
 	local readyframes = newframes
 	
@@ -933,18 +932,20 @@ function generatetag ( tags , fd , footer )
 		local size = #v [ 2 ]
 		readyframes [ i ] = vstruct.pack ( "> s m4 x2 s" , { v [ 1 ] , makesafesync ( size ) , v [ 2 ] } )
 	end
-	print(table.serialise(readyframes))
-	--return readyframes
-	-- Unsynch whole tag?
+	
+	-- Put frames together
+	local allframes = table.concat ( readyframes ) 
+	local amountofpadding = #allframes
+	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
+	-- compress,encrypt,unsync?
 	
 	-- Generate header
 	local h
 	if footer then h = "3DI\4\0"
 	else h = "ID3\4\0" end
-	print("HEADER" , h )
 	
 	-- Put it all together
-	return readyframes
+	return vstruct.pack ( "> s m4 s" , { h , makesafesync ( #padded ) , padded } )
 end
 
 function edit ( )
