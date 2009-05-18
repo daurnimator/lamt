@@ -24,8 +24,8 @@ _NAME = "ID3v2 tag reader/writer"
 local function desafesync ( tbl )
 	local new = { }
 	for i = 1 , #tbl do
-		if (i-1) % 8 ~= 0 then
-			table.insert ( new , tbl [ j ] )
+		if ( i ) % 8 ~= 0 then
+			table.insert ( new , tbl [ i ] )
 		end
 	end
 	return vstruct.implode ( new )
@@ -467,9 +467,14 @@ local framedecode = {
 		return { [ "cd toc"] = { str } }
 	end ,
 	
-	-- ETCO -- Event timing codes -- TODO???? 
-	-- MLLT -- Not applicable
-	-- SYTC -- Synchronised tempo codes
+	["ETCO"] = function ( str ) -- Event timing codes
+	end ,
+	
+	["MLLT"] = function ( str ) -- Not applicable
+	end ,
+	
+	["SYTC"] = function ( str ) -- Synchronised tempo codes
+	end ,
 	
 	-- Unsynchronised lyrics/text transcription
 	["USLT"] = function ( str )
@@ -479,7 +484,8 @@ local framedecode = {
 		return { [ "lyrics" ] = { t.text } }
 	end ,
 	
-	-- SYLT -- Synchronised lyrics/text
+	["SYLT"] = function ( str ) -- Synchronised lyrics/text
+	end ,
 	
 	-- Comment
 	["COMM"] = function ( str )
@@ -489,50 +495,71 @@ local framedecode = {
 		return { [ "comment" ] = { t.text } }
 	end ,
 	
-	-- RVA2 -- Relative volume adjustment (2)
-	-- EQU2 -- Equalisation (2)
-	-- RVRB -- Reverb
+	["RVA2"] = function ( str ) -- Relative volume adjustment
+	end ,
 	
-	-- Attached pictures
-	--["APIC"] = function ( str )
+	["EQU2"] = function ( str ) -- Equalisation (2)
+	end ,
+	
+	["RVRB"] = function ( str ) -- Reverb
+	end ,
+	
+	["APIC"] = function ( str ) -- Attached pictures
 		-- TODO: interpret pictures
-	--end ,
+	end ,
 	
-	-- GEOB -- General encapsulated object
+	["GEOB"] = function ( str ) -- General encapsulated object
+	end ,
 
-	-- PCNT -- Play counter
-	-- POPM -- Popularimeter
-	
-	-- RBUF -- Recommended buffer size
+	["PCNT"] = function ( str ) -- Play counter
+	end ,
 
-	-- AENC -- Audio encryption
+	["POPM"] = function ( str ) -- Popularimeter
+	end ,
 
-	-- LINK -- Linked information
+	["RBUF"] = function ( str ) -- Recommended buffer size
+	end ,
 
-	-- POSS -- Position synchronisation frame
-	
-	-- Terms of use frame
-	["USER"] = function ( str )
+	["AENC"] = function ( str ) -- Audio encryption
+	end ,
+
+	["LINK"] = function ( str ) -- Linked information
+	end ,
+
+	["POSS"] = function ( str ) -- Position synchronisation frame
+	end ,
+
+	["USER"] = function ( str ) -- Terms of use frame
 		local t = vstruct.unpack ( "> encoding:u1 language:s3 description:z text:s" .. #str - 5 , str )
 		t.text = string.match ( t.text or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
 		-- TODO: Can we do anything with language or description?
 		return { [ "terms of use" ] = { t.text } }
 	end ,
-	
-	-- OWNE -- Ownership frame
-	-- COMR -- Commericial frame
-	
-	-- ENCR -- Encryption method registration
-	-- GRID -- Group identification registration
 
-	-- PRIV -- Private frame
-	-- SIGN -- Signature frame
+	["OWNE"] = function ( str ) -- Ownership frame
+	end ,
+	
+	["COMR"] = function ( str ) -- Commericial frame
+	end ,
+	
+	["ENCR"] = function ( str ) -- Encryption method registration
+	end ,
+	
+	["GRID"] = function ( str ) -- Group identification registration
+	end ,
+	
+	["PRIV"] = function ( str ) -- Private frame
+	end ,
+	
+	["SIGN"] = function ( str ) -- Signature frame
+	end ,
 
-	-- SEEK -- Seek frame
-	
-	-- ASPI -- Audio seek point index
-	
-	
+	["SEEK"] = function ( str ) -- Seek frame
+	end ,
+
+	["ASPI"] = function ( str ) -- Audio seek point index
+	end ,
+
 	-- Older frames
 	["TORY"] = function ( str ) -- Year
 		return { [ "original release time" ] = readtextframe ( str ) }
@@ -550,7 +577,6 @@ local function readframeheader ( fd , header )
 		return false , "padding"
 	else
 		t.framesize = vstruct.implode ( t.safesyncsize )
-		t.size = t.framesize
 		if header.version == 4 then	
 			t.size = desafesync ( t.safesyncsize )
 			-- %0abc0000 %0h00kmnp
@@ -597,7 +623,7 @@ local function readframe ( fd , header )
 	local ok , err = readframeheader ( fd , header )
 	if ok then
 		local t = { }
-		fd:seek ( ok.startcontent )
+		fd:seek ( "set" , ok.startcontent )
 		t.framecontents = fd:read ( ok.size )
 		t.contents = t.framecontents
 		if ok.unsynched then -- Unsynch-safe the frame content
@@ -616,10 +642,11 @@ local function readframe ( fd , header )
 			end
 		end
 		if framedecode [ ok.id ] then
-			return t , framedecode [ ok.id ] ( t.contents )
+			--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
+			return t , ( framedecode [ ok.id ] ( t.contents ) or { } )
 		else -- We don't know of this frame type
-			print ( "Unknown frame" , ok.id , ok.size , t.contents )
-			return { }
+			--updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. t.contents , 5 )
+			return t , { }
 		end
 	else
 		return ok , err
