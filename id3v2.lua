@@ -42,6 +42,41 @@ local function readheader ( fd )
 		t.size = desafesync ( t.safesyncsize )
 		t.safesyncsize = nil -- Don't need to keep this.
 		t.firstframeoffset = fd:seek ( "cur" )
+		t.unsynched = t.flags [ 8 ]
+		if t.version > 4 then
+			return false , "Newer id3v2 version"
+		elseif t.version == 4 then
+			t.hasextendedheader = t.flags [ 7 ]
+			t.experimental = t.flags [ 6 ]
+			t.isfooter = t.flags [ 5 ]
+		elseif t.version == 3 then
+			t.hasextendedheader = t.flags [ 7 ]
+			t.experimental = t.flags [ 6 ]
+		elseif t.version == 2 then
+		end
+		if t.hasextendedheader then
+			local safesyncsize = vstruct.unpack ( "> safesyncsize:m4" , fd ).safesyncsize
+			if t.version == 4 then
+				local contents = fd:read ( desafesync ( safesyncsize ) - 4 )
+				t.e = { }
+				t.e.numflags = vstruct.unpack ( "> u1" , contents )
+				t.e.flags = vstruct.unpack ( "> " .. t.e.numflags .. " * m4" , string.sub ( contents , 2 ) )
+				for i , v in ipairs ( t.e.flags ) do
+					v.tagisupdate = v [ 7 ]
+					v.hascrc = v [ 6 ]
+					v.hastagrestrictions = v [ 5 ]
+				end
+			elseif t.version == 3 then
+				local contents = fd:read ( vstruct.implode ( safesyncsize ) )
+				t.e = vstruct.unpack ( "> flags:{ m4 m4 } sizeofpadding:u4" , contents )
+				t.e.hascrc = t.e.flags[1][8]
+				if t.e.hascrc then -- Has CRC
+					t.e.crc = string.sub ( contents , 13 , 17 )
+				end
+			else
+				fd:seek ( "cur" , -4 )
+			end
+		end
 		return t
 	else
 		return false , "Not an ID3v2 header/footer"
@@ -382,9 +417,10 @@ local framedecode = {
 	["TOFN"] = function ( str ) -- Original filename
 		return { [ "original filename" ] = readtextframe ( str ) }
 	end ,
-	--[[["TDLY"] = function ( str ) -- Playlist delay
-		return { [ "delay" ] = readtextframe ( str ) }
-	end ,--]]
+	["TDLY"] = function ( str ) -- Playlist delay
+		-- Unsupported/Pointless
+		-- return { [ "delay" ] = readtextframe ( str ) }
+	end ,
 	["TDEN"] = function ( str ) -- Encoding time
 		-- TODO: is a timestamp
 		return { [ "encoding time" ] = readtextframe ( str ) }
@@ -462,8 +498,9 @@ local framedecode = {
 		return { [ string.lower ( t.field ) .. " url" ] =  t.url }
 	end ,	
 	
-	-- Music CD identifier
-	["MCDI"] = function ( str )
+	
+	-- Misc fields
+	["MCDI"] = function ( str ) -- Music CD identifier
 		return { [ "cd toc"] = { str } }
 	end ,
 	
@@ -560,7 +597,7 @@ local framedecode = {
 	["ASPI"] = function ( str ) -- Audio seek point index
 	end ,
 
-	-- Older frames
+	-- ID3v2.3 frames (Older frames)
 	["TORY"] = function ( str ) -- Year
 		return { [ "original release time" ] = readtextframe ( str ) }
 	end ,
@@ -568,55 +605,141 @@ local framedecode = {
 		return { [ "date" ] = readtextframe ( str ) }
 	end ,
 }
+do -- ID3v2.2 frames -- RAWWWWWWWRRRRRRR
+	framedecode["BUF"] = framedecode["RBUF"]
+	
+	framedecode["CNT"] = framedecode["PCNT"]
+	framedecode["COM"] = framedecode["COMM"]
+	framedecode["CRA"] = framedecode["AENC"]
+	-- CRM
+	framedecode["EQU"] = framedecode["EQUA"]
+	framedecode["ETC"] = framedecode["ETCO"]
+	
+	framedecode["GEO"] = framedecode["GEOB"]
+	
+	framedecode["IPL"] = framedecode["IPLS"]
+	
+	framedecode["MCI"] = framedecode["MDCI"]
+	framedecode["MLL"] = framedecode["MLLT"]
+	
+	-- PIC
+	framedecode["POP"] = framedecode["POPM"]
+	framedecode["REV"] = framedecode["RVRB"]
+	framedecode["RVA"] = framedecode["RVAD"]
+	
+	framedecode["SLT"] = framedecode["SYLT"]
+	framedecode["STC"] = framedecode["SYTC"]
+	
+	framedecode["TAL"] = framedecode["TALB"]
+	framedecode["TBP"] = framedecode["TBPM"]
+	framedecode["TCM"] = framedecode["TCOM"]
+	framedecode["TCO"] = framedecode["TCON"]
+	framedecode["TCR"] = framedecode["TCOP"]
+	framedecode["TDA"] = framedecode["TDAT"]
+	framedecode["TDY"] = framedecode["TDLY"]
+	framedecode["TEN"] = framedecode["TENC"]
+	framedecode["TFT"] = framedecode["TFLT"]
+	framedecode["TIM"] = framedecode["TIME"]
+	framedecode["TKE"] = framedecode["TKEY"]
+	framedecode["TLA"] = framedecode["TLAN"]
+	framedecode["TLE"] = framedecode["TLEN"]
+	framedecode["TMT"] = framedecode["TMED"]
+	framedecode["TOA"] = framedecode["TOPE"]
+	framedecode["TOF"] = framedecode["TOFN"]
+	framedecode["TOL"] = framedecode["TOLY"]
+	framedecode["TOR"] = framedecode["TORY"]
+	framedecode["TOT"] = framedecode["TOAL"]
+	framedecode["TP1"] = framedecode["TPE1"]
+	framedecode["TP2"] = framedecode["TPE2"]
+	framedecode["TP3"] = framedecode["TPE3"]
+	framedecode["TP4"] = framedecode["TPE4"]
+	framedecode["TPA"] = framedecode["TPOS"]
+	framedecode["TPB"] = framedecode["TPUB"]
+	framedecode["TRC"] = framedecode["TSRC"]
+	framedecode["TRD"] = framedecode["TRDA"]
+	framedecode["TRK"] = framedecode["TRCK"]
+	framedecode["TSI"] = framedecode["TSIZ"]
+	framedecode["TSS"] = framedecode["TSSE"]
+	framedecode["TT1"] = framedecode["TIT1"]
+	framedecode["TT2"] = framedecode["TIT2"]
+	framedecode["TT3"] = framedecode["TIT3"]
+	framedecode["TXT"] = framedecode["TEXT"]
+	framedecode["TXX"] = framedecode["TXXX"]
+	framedecode["TYE"] = framedecode["TYER"]
+	
+	framedecode["UFI"] = framedecode["UFID"]
+	framedecode["ULT"] = framedecode["USLT"]
+	
+	framedecode["WAF"] = framedecode["WOAF"]
+	framedecode["WAR"] = framedecode["WOAR"]
+	framedecode["WAS"] = framedecode["WOAS"]
+	framedecode["WCM"] = framedecode["WCOM"]
+	framedecode["WCP"] = framedecode["WCOP"]
+	framedecode["WPB"] = framedecode["WPUB"]
+	framedecode["WXX"] = framedecode["WXXX"]
+end
 
--- Read 10 byte frame header
+-- Read 6 or 10 byte frame header
 local function readframeheader ( fd , header )
-	local t = vstruct.unpack ( "> id:s4 safesyncsize:m4 statusflags:m1 formatflags:m1" , fd )
-	if t.id == "\0\0\0\0" then -- padding
-		fd:seek ( "cur" , -10 ) -- Rewind to what would have been start of frame
-		return false , "padding"
-	else
-		t.framesize = vstruct.implode ( t.safesyncsize )
-		if header.version == 4 then	
-			t.size = desafesync ( t.safesyncsize )
-			-- %0abc0000 %0h00kmnp
-			t.tagalterpreserv = t.statusflags [ 7 ]
-			t.filealterpreserv = t.statusflags [ 6 ]
-			t.readonly = t.statusflags [ 5 ]
-			t.compressed = t.formatflags [  4 ]
-			t.encrypted = t.formatflags [ 3 ]
-			t.grouped = t.formatflags [ 7 ]
-			t.unsynched = t.formatflags [ 2 ]
-			t.hasdatalength = t.formatflags [ 1 ]
-			if t.grouped then t.groupingbyte = fd:read ( 1 ) end
-			if t.encrypted then t.encryption = fd:read ( 1 ) end
-			if t.hasdatalength then t.datalength = fd:read ( 4 ) end
-		elseif header.version <= 3 then
-			t.size = t.framesize
-			-- %abc00000 %ijk00000 
-			t.tagalterpreserv = t.statusflags [ 8 ]
-			t.filealterpreserv = t.statusflags [ 7 ]
-			t.readonly = t.statusflags [ 6 ]
-			t.compressed = t.formatflags [  8 ]
-			t.encrypted = t.formatflags [ 7 ]
-			t.grouped = t.formatflags [ 6 ]
-			if t.compressed then
-				t.size = t.size - 4
-				t.datalength = fd:read ( 4 )
+	if header.version >= 3 then
+		local t = vstruct.unpack ( "> id:s4 safesyncsize:m4 statusflags:m1 formatflags:m1" , fd )
+		if t.id == "\0\0\0\0" then -- padding
+			fd:seek ( "cur" , - 10 ) -- Rewind to what would have been start of frame
+			return false , "padding"
+		else
+			t.framesize = vstruct.implode ( t.safesyncsize )
+			if header.version == 4 then	
+				t.size = desafesync ( t.safesyncsize )
+				-- %0abc0000 %0h00kmnp
+				t.tagalterpreserv = t.statusflags [ 7 ]
+				t.filealterpreserv = t.statusflags [ 6 ]
+				t.readonly = t.statusflags [ 5 ]
+				t.compressed = t.formatflags [  4 ]
+				t.encrypted = t.formatflags [ 3 ]
+				t.grouped = t.formatflags [ 7 ]
+				t.unsynched = t.formatflags [ 2 ]
+				t.hasdatalength = t.formatflags [ 1 ]
+				if t.grouped then t.groupingbyte = fd:read ( 1 ) end
+				if t.encrypted then t.encryption = fd:read ( 1 ) end
+				if t.hasdatalength then t.datalength = fd:read ( 4 ) end
+			elseif header.version <= 3 then
+				t.size = t.framesize
+				-- %abc00000 %ijk00000 
+				t.tagalterpreserv = t.statusflags [ 8 ]
+				t.filealterpreserv = t.statusflags [ 7 ]
+				t.readonly = t.statusflags [ 6 ]
+				t.compressed = t.formatflags [  8 ]
+				t.encrypted = t.formatflags [ 7 ]
+				t.grouped = t.formatflags [ 6 ]
+				if t.compressed then
+					t.size = t.size - 4
+					t.datalength = fd:read ( 4 )
+				end
+				if t.encrypted then
+					t.size = t.size - 1
+					t.encryption = fd:read ( 1 ) 
+				end
+				if t.grouped then 
+					t.size = t.size - 1
+					t.groupingbyte = fd:read ( 1 ) 
+				end
 			end
-			if t.encrypted then
-				t.size = t.size - 1
-				t.encryption = fd:read ( 1 ) 
-			end
-			if t.grouped then 
-				t.size = t.size - 1
-				t.groupingbyte = fd:read ( 1 ) 
-			end
+			t.startcontent = fd:seek ( "cur" )
+			t.startheader = fd:seek ( "cur" , -10 )
+			t.safesyncsize = nil
+			return t
 		end
-		t.startcontent = fd:seek ( "cur" )
-		t.startheader = fd:seek ( "cur" , -10 )
-		t.safesyncsize = nil
-		return t
+	elseif header.version == 2 then
+		local t = vstruct.unpack ( "> id:s3 size:u3" , fd )
+		if t.id == "\0\0\0" then -- padding
+			fd:seek ( "cur" , -6 ) -- Rewind to what would have been start of frame
+			return false , "padding"
+		else
+			t.framesize = t.size
+			t.startcontent = fd:seek ( "cur" )
+			t.startheader = fd:seek ( "cur" , -6 )
+			return t
+		end
 	end
 end
 local function readframe ( fd , header )
@@ -660,11 +783,11 @@ function find ( fd )
 	if h then return fd:seek ( "set" ) end
 	fd:seek ( "end" , -10 )
 	h = readheader ( fd )
-	if h then 
+	if h then
 		local offsetfooter = ( h.size + 20 ) -- Offset to start of footer from end of file
 		fd:seek ( "end" , -offsetfooter) 
 		h = readheader ( fd )
-		if h and h.flags [ 5 ] then return fd:seek ( "end" , -offsetfooter ) end -- 4th flag (but its in reverse order) is if has footer
+		if h and h.isfooter then return fd:seek ( "end" , -offsetfooter ) end
 	end
 end
 
@@ -674,12 +797,16 @@ function info ( fd , location , item )
 	if header then
 		item.tags = { }
 		item.extra = { id3v2version = header.version }
-		local i = 0
-		while i < ( header.size - 10) do
-			local ok , err = readframe ( fd , header )
+		local id3tag = fd:read ( header.size )
+		if header.unsynched then
+			id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+				:gsub ( "\255%z%z" ,  "\255\0" )
+		end
+		local sd = vstruct.cursor ( id3tag )
+		while sd:seek ( "cur" ) < ( header.size - 10) do
+			local ok , err = readframe ( sd , header )
 			if ok then
 				table.inherit ( item.tags , err , true )
-				i = fd:seek ( "cur" ) - header.firstframeoffset
 			elseif err == "padding" then
 				break
 			end
@@ -697,7 +824,7 @@ function generatetag ( tags , fd , footer )
 		local header = readheader ( fd )
 		if header then
 			t = { }
-			while i < ( header.size - 10) do
+			while i <= ( header.size - 6 ) do
 				local ok , err = readframeheader ( fd , header )
 				if err == "padding" then
 					break
