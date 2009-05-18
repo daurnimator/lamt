@@ -25,15 +25,39 @@ local function desafesync ( tbl )
 	local new = { }
 	for i = 1 , #tbl do
 		if ( i ) % 8 ~= 0 then
-			table.insert ( new , tbl [ i ] )
+			new [ #new + 1 ] = tbl [ i ]
 		end
 	end
 	return vstruct.implode ( new )
 end
+local function makesafesync ( int )
+	local tbl = vstruct.explode ( int )
+	local new = { }
+	for i = 1 , #tbl do
+		if ( i ) % 8 == 0 then
+			new [ #new + 1 ] = false
+		end
+		new [ #new + 1 ] = tbl [ i ]
+	end
+	return new
+end
 
+-- Table of Encodings according to the Id3standard, names match with iconv
+local encodings = {
+	[ 0 ] = { name = "ISO-8859-1" , nulls = "1" } , 
+	[ 1 ] = { name = "UTF-16" , nulls = "2" } , 
+	[ 2 ] = { name = "UTF-16BE" , nulls = "2" } , 
+	[ 3 ] = { name = "UTF-8" , nulls = "1" } , 
+}
+-- Converts string in specified encoding to utf8
 local function utf8 ( str , encoding )
 	if not encoding then encoding = "ISO-8859-1" end
 	return iconv.new ( "UTF-8" ,  encoding ):iconv ( str )
+end
+-- Converts string in specified encoding to ascii (iso-8859-1)
+local function ascii ( str , encoding )
+	if not encoding then encoding = "UTF-8" end
+	return iconv.new ( "ISO-8859-1" ,  encoding ):iconv ( str )
 end
 
 local function readheader ( fd )
@@ -90,38 +114,38 @@ local frameencode = {
 	[ "subtitle" ] = "TIT3" ,
 	[ "album" ] = "TALB" ,
 	[ "original album" ] = "TOAL" ,
-	[ "tracknumber" ] = function ( item )
-						local t = { }
-						for i , v in ipairs ( item ["tracknumber"] or { } ) do
-							if item ["totaltracks"] [i] then
-								table.insert ( t , tostring ( v ) .. "/" .. item ["totaltracks"] [i] )
-							else
-								table.insert ( t , tostring ( v ) ) 
-							end	
-						end
-						return "TRCK" , t
-					end ,
-	[ "totaltracks" ] = function ( item )
-						if not item ["tracknumber"] [i] then -- If not going to put in with tracknumber in TRCK, put in TXXX
-							return "TXXX"
-						end
-					end ,
-	[ "discnumber" ] = function ( item )
-						local t = { }
-						for i , v in ipairs ( item ["discnumber"] or { } ) do
-							if item ["totaldiscs"] [i] then
-								table.insert ( t , tostring ( v ) .. "/" .. item ["totaldiscs"] [i] )
-							else
-								table.insert ( t , tostring ( v ) ) 
-							end	
-						end
-						return "TPOS" , t
-					end ,	
-	[ "totaldiscs" ] = function ( item )
-						if not item ["discnumber"] [i] then -- If not going to put in with discnumber in TPOS, put in TXXX
-							return "TXXX"
-						end
-					end ,
+	[ "tracknumber" ] = function ( tags )
+		local t = { }
+		for i , v in ipairs ( tags [ "tracknumber" ] or { } ) do
+			if tags [ "totaltracks" ] [ i ] then
+				table.insert ( t , tostring ( v ) .. "/" .. tags [ "totaltracks" ] [i] )
+			else
+				table.insert ( t , tostring ( v ) ) 
+			end	
+		end
+		return "TRCK" , t , false
+	end ,
+	[ "totaltracks" ] = function ( tags )
+		if not tags [ "tracknumber" ] [ i ] then -- If not going to put in with tracknumber in TRCK, put in TXXX
+			return "TXXX" , nil , false
+		end
+	end ,
+	[ "discnumber" ] = function ( tags )
+		local t = { }
+		for i , v in ipairs ( tags [ "discnumber" ] or { } ) do
+			if tags [ "totaldiscs" ] [ i ] then
+				table.insert ( t , tostring ( v ) .. "/" .. tags [ "totaldiscs" ] [i] )
+			else
+				table.insert ( t , tostring ( v ) ) 
+			end	
+		end
+		return "TPOS" , t , false
+	end ,	
+	[ "totaldiscs" ] = function ( tags )
+		if not tags ["discnumber"] [i] then -- If not going to put in with discnumber in TPOS, put in TXXX
+			return "TXXX" , nil , false
+		end
+	end ,
 	[ "set subtitle" ] = "TSST" ,
 	[ "isrc" ] = "TSRC" ,
 
@@ -156,7 +180,7 @@ local frameencode = {
 	--[ "delay" ] = "TDLY" , -- Special
 	[ "encoding time" ] = "TDEN" , -- Special: Time
 	[ "original release time" ] = "TDOR" , -- Special: Time
-	[ "recorded" ] = "TDRC" , -- Special: Time
+	[ "date" ] = "TDRC" , -- Special: Time
 	[ "release time" ] = "TDRL" , -- Special: Time
 	[ "tagged" ] = "TDTG" , -- Special: Time
 	[ "encoder settings" ] = "TSSE" ,
@@ -179,17 +203,23 @@ local frameencode = {
 	-- MLLT -- Not applicable
 	-- SYTC -- Synchronised tempo codes
 	
-	[ "lyrics" ] = function ( item )
+	--[[[ "lyrics" ] = function ( tags )
 		-- TODO
-		return "USLT"
-	end ,
+		return "USLT" , nil , true
+	end ,--]]
 	
 	-- SYLT -- Synchronised lyrics/text
 	
 	-- Comment
-	["comment"] = function ( str )
-		-- TODO
-		return "COMM"
+	["comment"] = function ( tags )
+		local e = 3 -- Encoding, 3 is UTF-8
+		local language = "eng" -- 3 character language
+		local t = { }
+		for i , v in ipairs ( tags [ "comment" ] ) do
+			local shortdescription = utf8 ( "Comment #" .. i ) -- UTF-8 string
+			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf8 ( v ) .. string.rep ( "\0" , encodings [ e ].nulls )
+		end
+		return "COMM" , t , false
 	end ,
 	
 	-- RVA2 -- Relative volume adjustment (2)
@@ -212,8 +242,11 @@ local frameencode = {
 	-- POSS -- Position synchronisation frame
 	
 	-- Terms of use frame
-	[ "terms of use" ] = function ( item )
-		return "USER"
+	[ "terms of use" ] = function ( tags )
+		local e = 3 -- Encoding, 3 is UTF-8
+		local language = "eng" -- 3 character language
+		local s = string.char ( e ) .. language .. utf8 (  tags [ "terms of use" ] [ 1 ] ) .. string.rep ( "\0" , encodings [ e ].nulls )
+		return "USER" , { s } , toboolean ( v [ 2 ] )
 	end ,
 	
 	-- OWNE -- Ownership frame
@@ -228,13 +261,6 @@ local frameencode = {
 	-- SEEK -- Seek frame
 	
 	-- ASPI -- Audio seek point index
-}
-
-local encodings = {
-	[ 0 ] = { name = "ISO-8859-1" , nulls = "1" } , 
-	[ 1 ] = { name = "UTF-16" , nulls = "2" } , 
-	[ 2 ] = { name = "UTF-16BE" , nulls = "2" } , 
-	[ 3 ] = { name = "UTF-8" , nulls = "1" } , 
 }
 
 local function readtextframe ( str )
@@ -495,7 +521,9 @@ local framedecode = {
 	["WXXX"] = function ( str ) -- Custom
 		local t = vstruct.unpack ( "> field:z url:s" .. #str - 1 , str )
 		t.url = string.match ( t.url  or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
-		return { [ string.lower ( t.field ) .. " url" ] =  t.url }
+		if #t.field == 0 then t.field = "url"
+		else t.field = string.lower ( t.field ) .. " url" end
+		return { [ t.field ] = { t.url } }
 	end ,	
 	
 	
@@ -768,7 +796,7 @@ local function readframe ( fd , header )
 			--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
 			return t , ( framedecode [ ok.id ] ( t.contents ) or { } )
 		else -- We don't know of this frame type
-			--updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. t.contents , 5 )
+			updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. t.contents , 5 )
 			return t , { }
 		end
 	else
@@ -803,7 +831,7 @@ function info ( fd , location , item )
 				:gsub ( "\255%z%z" ,  "\255\0" )
 		end
 		local sd = vstruct.cursor ( id3tag )
-		while sd:seek ( "cur" ) < ( header.size - 10) do
+		while sd:seek ( "cur" ) < ( header.size - 6 ) do
 			local ok , err = readframe ( sd , header )
 			if ok then
 				table.inherit ( item.tags , err , true )
@@ -818,28 +846,29 @@ function info ( fd , location , item )
 end
 
 function generatetag ( tags , fd , footer )
-	local t
+	--[[local
 	if io.type ( fd ) then -- Get existing tag
 		fd:seek ( "set" , location )
 		local header = readheader ( fd )
 		if header then
 			t = { }
-			while i <= ( header.size - 6 ) do
-				local ok , err = readframeheader ( fd , header )
-				if err == "padding" then
-					break
-				else
-					print ( table.recurseserialise ( ok ) )
-					
-					if ok.tagalterpreserv then
-					t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
-					--elseif then
-					
+			local id3tag = fd:read ( header.size )
+			if header.unsynched then
+				id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+					:gsub ( "\255%z%z" ,  "\255\0" )
+			end
+			local sd = vstruct.cursor ( id3tag )
+			while sd:seek ( "cur" ) < ( header.size - 6 ) do
+				local ok , err = readframeheader ( sd , header )
+				if ok then
+					if ok.tagalterpreserv then -- Preserve as is
+						t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
+					elseif
 					else
-						fd:seek ( "cur" , ok.size )
+						sd:seek ( "cur" , ok.size )
 					end
-					
-					i = fd:seek ( "cur" ) - header.firstframeoffset
+				elseif err == "padding" then
+					break
 				end
 			end
 			t.paddingstart = fd:seek ( "cur" )
@@ -848,10 +877,74 @@ function generatetag ( tags , fd , footer )
 	end
 	if not t then -- New tag from scratch
 		t = { }
+
+	end--]]
+	
+	local datadiscarded = false
+	
+	local newframes = { }
+	for k , v in pairs ( tags ) do
+		local r = frameencode [ k ]
+		if type ( r ) == "function" then
+			local a , b
+			r , a , b = r ( tags )
+			v = a or v
+			datadiscarded = b or datadiscarded
+		end
+		if type ( r ) == "string" then
+			if string.sub ( r , 1 , 1 ) == "T"  and r ~= "TXXX" then -- Standard defined Text field
+				local e = 3 -- Encoding, 3 is UTF-8
+				local s = string.char ( e )
+				for i , text in ipairs ( v ) do
+					s = s .. text .. string.rep ( "\0" , encodings [ e ].nulls )
+				end
+				newframes [ #newframes + 1 ] = { r , s }
+			elseif string.sub ( r , 1 , 1 ) == "W" and r ~= "WXXX" then -- Standard defined Link field
+				newframes [ #newframes + 1 ] = { r , ascii ( v [ 1 ] , "UTF-8" ) } -- Only allowed one url per field
+				if v [ 2 ] then datadiscarded = true end
+			else -- Assume binary data
+				for i , bin in ipairs ( v ) do
+					newframes [ #newframes + 1 ] = { r , bin }
+				end
+			end
+		elseif not r then
+			if string.match ( v [ 1 ] , "(%w+)://" ) or string.match ( k , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
+				r = "WXXX"
+				local e = 3 -- Encoding, 3 is UTF-8
+				newframes [ #newframes + 1 ] = { r , string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) }
+				if v [ 2 ] then datadiscarded = true end
+			else	-- Put in a TXXX field
+				r = "TXXX"
+				local e = 3 -- Encoding, 3 is UTF-8
+				local s = string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls )
+				for i , text in ipairs ( v ) do
+					s = s .. text .. string.rep ( "\0" , encodings [ e ].nulls )
+				end
+				newframes [ #newframes + 1 ] = { r , s }
+			end
+		end
 	end
+	print(table.serialise(newframes))
+	-- Check for doubled up frames
+	local readyframes = newframes
+	
+	-- Add frame headers
+	for i , v in ipairs ( readyframes ) do
+		local size = #v [ 2 ]
+		readyframes [ i ] = vstruct.pack ( "> s m4 x2 s" , { v [ 1 ] , makesafesync ( size ) , v [ 2 ] } )
+	end
+	print(table.serialise(readyframes))
+	--return readyframes
+	-- Unsynch whole tag?
 	
 	-- Generate header
+	local h
+	if footer then h = "3DI\4\0"
+	else h = "ID3\4\0" end
+	print("HEADER" , h )
 	
+	-- Put it all together
+	return readyframes
 end
 
 function edit ( )
