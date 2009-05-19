@@ -24,7 +24,7 @@ _NAME = "ID3v2 tag reader/writer"
 local function desafesync ( tbl )
 	local new = { }
 	for i = 1 , #tbl do
-		if ( i ) % 8 ~= 0 then
+		if i % 8 ~= 0 then
 			new [ #new + 1 ] = tbl [ i ]
 		end
 	end
@@ -34,7 +34,7 @@ local function makesafesync ( int )
 	local tbl = vstruct.explode ( int )
 	local new = { }
 	for i = 1 , #tbl do
-		if ( i ) % 8 == 0 then
+		if i % 8 == 0 then
 			new [ #new + 1 ] = false
 		end
 		new [ #new + 1 ] = tbl [ i ]
@@ -216,8 +216,8 @@ local frameencode = {
 		local language = "eng" -- 3 character language
 		local t = { }
 		for i , v in ipairs ( tags [ "comment" ] ) do
-			local shortdescription = utf8 ( "Comment #" .. i ) -- UTF-8 string
-			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf8 ( v ) .. string.rep ( "\0" , encodings [ e ].nulls )
+			local shortdescription = ""--utf8 ( "Comment #" .. i ) -- UTF-8 string
+			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf8 ( v )
 		end
 		return "COMM" , t , false
 	end ,
@@ -245,7 +245,7 @@ local frameencode = {
 	[ "terms of use" ] = function ( tags )
 		local e = 3 -- Encoding, 3 is UTF-8
 		local language = "eng" -- 3 character language
-		local s = string.char ( e ) .. language .. utf8 (  tags [ "terms of use" ] [ 1 ] ) .. string.rep ( "\0" , encodings [ e ].nulls )
+		local s = string.char ( e ) .. language .. utf8 (  tags [ "terms of use" ] [ 1 ] )
 		return "USER" , { s } , toboolean ( v [ 2 ] )
 	end ,
 	
@@ -412,7 +412,7 @@ local framedecode = {
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local m = string.match ( v , "(%d%d%d%d)%s" )
 			if m then 
-				c [ #c + 1 ] = "Copyright " .. m
+				c [ #c + 1 ] = m
 			end
 		end
 		return { [ "copyright" ] =  c }
@@ -422,7 +422,7 @@ local framedecode = {
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local m = string.match ( v , "(%d%d%d%d)%s" )
 			if m then 
-				p [ #p + 1 ] = "Produced " .. m
+				p [ #p + 1 ] = m
 			end
 		end
 		return { [ "produced" ] =p }
@@ -521,8 +521,13 @@ local framedecode = {
 	["WXXX"] = function ( str ) -- Custom
 		local t = vstruct.unpack ( "> field:z url:s" .. #str - 1 , str )
 		t.url = string.match ( t.url  or "" , "^%z*(.*)" ) or "" -- Strip any leading nulls
-		if #t.field == 0 then t.field = "url"
-		else t.field = string.lower ( t.field ) .. " url" end
+		if #t.field == 0 or not string.find ( t.field , "%w" )  then 
+			t.field = "url"
+		else t.field = string.lower ( t.field )
+			if not string.find ( t.field , "url$" ) then
+				t.field = t.field .. " url"
+			end
+		end
 		return { [ t.field ] = { t.url } }
 	end ,	
 	
@@ -716,9 +721,9 @@ local function readframeheader ( fd , header )
 			return false , "padding"
 		else
 			t.framesize = vstruct.implode ( t.safesyncsize )
-			if header.version == 4 then	
+			if header.version == 4 then -- id3v2.4
 				t.size = desafesync ( t.safesyncsize )
-				-- %0abc0000 %0h00kmnp
+				-- Flags: %0abc0000 %0h00kmnp
 				t.tagalterpreserv = t.statusflags [ 7 ]
 				t.filealterpreserv = t.statusflags [ 6 ]
 				t.readonly = t.statusflags [ 5 ]
@@ -730,9 +735,9 @@ local function readframeheader ( fd , header )
 				if t.grouped then t.groupingbyte = fd:read ( 1 ) end
 				if t.encrypted then t.encryption = fd:read ( 1 ) end
 				if t.hasdatalength then t.datalength = fd:read ( 4 ) end
-			elseif header.version <= 3 then
+			elseif header.version <= 3 then -- id3v2.3
 				t.size = t.framesize
-				-- %abc00000 %ijk00000 
+				-- Flags: %abc00000 %ijk00000 
 				t.tagalterpreserv = t.statusflags [ 8 ]
 				t.filealterpreserv = t.statusflags [ 7 ]
 				t.readonly = t.statusflags [ 6 ]
@@ -757,7 +762,7 @@ local function readframeheader ( fd , header )
 			t.safesyncsize = nil
 			return t
 		end
-	elseif header.version == 2 then
+	elseif header.version == 2 then -- id3v2.2
 		local t = vstruct.unpack ( "> id:s3 size:u3" , fd )
 		if t.id == "\0\0\0" then -- padding
 			fd:seek ( "cur" , -6 ) -- Rewind to what would have been start of frame
@@ -770,40 +775,49 @@ local function readframeheader ( fd , header )
 		end
 	end
 end
+
+local function decodeframe ( frame , header , frameheader )
+	if frameheader.unsynched then -- Unsynch-safe the frame content
+		frame = frame:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+			:gsub ( "\255%z%z" ,  "\255\0" )
+	end
+	if frameheader.encrypted then
+		return false , "Encrypted frame, cannot decrypt"
+	end
+	if frameheader.compressed then -- Frame compressed with zlib
+		local zlibok , z = pcall ( require , "zlib" )
+		if zlibok and z then
+			frame = z.decompress ( frame )
+		else
+			return false , "Compressed frame and no zlib available"
+		end
+	end
+	return frame
+end
+
 local function readframe ( fd , header )
 	local ok , err = readframeheader ( fd , header )
 	if ok then
-		local t = { }
 		fd:seek ( "set" , ok.startcontent )
-		t.framecontents = fd:read ( ok.size )
-		t.contents = t.framecontents
-		if ok.unsynched then -- Unsynch-safe the frame content
-			t.contents = t.contents:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-				:gsub ( "\255%z%z" ,  "\255\0" )
-		end
-		if ok.encrypted then
-			return false , "Encrypted frame, cannot decrypt"
-		end
-		if ok.compressed then -- Frame compressed with zlib
-			local zlibok , z = pcall ( require , "zlib" )
-			if zlibok and z then
-				t.contents = z.decompress ( t.contents )
-			else
-				return false , "Compressed frame and no zlib available"
+		local frame , err = decodeframe ( fd:read ( ok.size ) , header , ok )
+		if frame then
+			if framedecode [ ok.id ] then
+				--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
+				return ( framedecode [ ok.id ] ( frame ) or { } )
+			else -- We don't know of this frame type
+				print ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
+				return { }
 			end
-		end
-		if framedecode [ ok.id ] then
-			--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
-			return t , ( framedecode [ ok.id ] ( t.contents ) or { } )
-		else -- We don't know of this frame type
-			updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. t.contents , 5 )
-			return t , { }
+		else
+			return frame , err
 		end
 	else
 		return ok , err
 	end
 end
 
+-- Trys to find an id3tag in given file handle
+ -- Returns the start of the tag as a file offset
 function find ( fd )
 	fd:seek ( "set" ) -- Look at start of file
 	local h
@@ -834,9 +848,11 @@ function info ( fd , location , item )
 		while sd:seek ( "cur" ) < ( header.size - 6 ) do
 			local ok , err = readframe ( sd , header )
 			if ok then
-				table.inherit ( item.tags , err , true )
+				table.inherit ( item.tags , ok , true )
 			elseif err == "padding" then
 				break
+			else
+				updatelog ( err , 5 )
 			end
 		end
 		return item
@@ -845,43 +861,9 @@ function info ( fd , location , item )
 	end
 end
 
-function generatetag ( tags , fd , footer )
-	--[[local
-	if io.type ( fd ) then -- Get existing tag
-		fd:seek ( "set" , location )
-		local header = readheader ( fd )
-		if header then
-			t = { }
-			local id3tag = fd:read ( header.size )
-			if header.unsynched then
-				id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-					:gsub ( "\255%z%z" ,  "\255\0" )
-			end
-			local sd = vstruct.cursor ( id3tag )
-			while sd:seek ( "cur" ) < ( header.size - 6 ) do
-				local ok , err = readframeheader ( sd , header )
-				if ok then
-					if ok.tagalterpreserv then -- Preserve as is
-						t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
-					elseif
-					else
-						sd:seek ( "cur" , ok.size )
-					end
-				elseif err == "padding" then
-					break
-				end
-			end
-			t.paddingstart = fd:seek ( "cur" )
-			t.paddingend = t.paddingstart - location + header.size
-		end
-	end
-	if not t then -- New tag from scratch
-		t = { }
-
-	end--]]
-	
-	local datadiscarded = false
-	
+-- Make frames from tags
+ -- Returns a table where each entry is a frame
+local function generateframes ( tags )
 	local newframes = { }
 	for k , v in pairs ( tags ) do
 		local r = frameencode [ k ]
@@ -894,9 +876,9 @@ function generatetag ( tags , fd , footer )
 		if type ( r ) == "string" then
 			if string.sub ( r , 1 , 1 ) == "T"  and r ~= "TXXX" then -- Standard defined Text field
 				local e = 3 -- Encoding, 3 is UTF-8
-				local s = string.char ( e )
-				for i , text in ipairs ( v ) do
-					s = s .. text .. string.rep ( "\0" , encodings [ e ].nulls )
+				local s = string.char ( e ) .. v [ 1 ]
+				for i =2 , #v do
+					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
 				end
 				newframes [ #newframes + 1 ] = { r , s }
 			elseif string.sub ( r , 1 , 1 ) == "W" and r ~= "WXXX" then -- Standard defined Link field
@@ -908,44 +890,117 @@ function generatetag ( tags , fd , footer )
 				end
 			end
 		elseif not r then
-			if string.match ( v [ 1 ] , "(%w+)://" ) or string.match ( k , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
+			if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( k , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
 				r = "WXXX"
 				local e = 3 -- Encoding, 3 is UTF-8
+				k = k:match ( "(.+)url" ) or k
 				newframes [ #newframes + 1 ] = { r , string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) }
 				if v [ 2 ] then datadiscarded = true end
 			else	-- Put in a TXXX field
 				r = "TXXX"
 				local e = 3 -- Encoding, 3 is UTF-8
-				local s = string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls )
-				for i , text in ipairs ( v ) do
-					s = s .. text .. string.rep ( "\0" , encodings [ e ].nulls )
+				local s = string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ 1 ]
+				for i =2 , #v do
+					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
 				end
 				newframes [ #newframes + 1 ] = { r , s }
 			end
 		end
+		newframes [ #newframes ] [ 3 ] = "\0\0" -- Index three contains flags
 	end
-	-- Check for doubled up frames
-	local readyframes = newframes
+	return newframes
+end
+
+function generatetag ( tags , fd , footer , dontwrite )
+	local newframes = generateframes ( tags )
 	
+	local starttag = find ( fd )
+	local sizetofitinto = 0 -- Size available to fit into from value of starttag
+	
+	if starttag then -- File has existing tag
+		--[[local
+		if io.type ( fd ) then -- Get existing tag
+			fd:seek ( "set" , location )
+			local header = readheader ( fd )
+			if header then
+				t = { }
+				local id3tag = fd:read ( header.size )
+				if header.unsynched then
+					id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+						:gsub ( "\255%z%z" ,  "\255\0" )
+				end
+				local sd = vstruct.cursor ( id3tag )
+				while sd:seek ( "cur" ) < ( header.size - 6 ) do
+					local ok , err = readframeheader ( sd , header )
+					if ok then
+						if ok.tagalterpreserv then -- Preserve as is
+							t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
+						elseif
+						else
+							sd:seek ( "cur" , ok.size )
+						end
+					elseif err == "padding" then
+						break
+					end
+				end
+				t.paddingstart = fd:seek ( "cur" )
+				t.paddingend = t.paddingstart - location + header.size
+			end
+		end
+		if not t then -- New tag from scratch
+			t = { }
+
+		end--]]
+	else -- File had no tag
+		if footer then starttag = fd:seek ( "end" )
+		else starttag = 0 end
+	end
+	
+	local datadiscarded = false
+	
+	-- Check for doubled up frames
+	local readyframes = generateframes ( tags )
+		
 	-- Add frame headers
 	for i , v in ipairs ( readyframes ) do
 		local size = #v [ 2 ]
-		readyframes [ i ] = vstruct.pack ( "> s m4 x2 s" , { v [ 1 ] , makesafesync ( size ) , v [ 2 ] } )
+		--print(v[1],v[2],v[3],#v[2])
+		readyframes [ i ] = vstruct.pack ( "> s m4 s2 s" , { v [ 1 ] , makesafesync ( size ) , v [ 3 ] , v [ 2 ] } )
 	end
 	
 	-- Put frames together
 	local allframes = table.concat ( readyframes ) 
-	local amountofpadding = #allframes
-	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
+
 	-- compress,encrypt,unsync?
 	
 	-- Generate header
-	local h
-	if footer then h = "3DI\4\0"
-	else h = "ID3\4\0" end
-	
+	local id3version = "4"
+	local flags = { false , false , false , false , false , false , false , false }
 	-- Put it all together
-	return vstruct.pack ( "> s m4 s" , { h , makesafesync ( #padded ) , padded } )
+	local amountofpadding
+	if sizetofitinto > ( #allframes  + 10 ) then
+		amountofpadding = sizetofitinto - 10 - #allframes -- TODO: detect extended headers
+	else
+		amountofpadding = #allframes -- Double the room we're already taking up
+	end
+	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
+	
+	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , id3version, flags , makesafesync ( #padded ) , padded } ) , datadiscarded
+
+	-- Write tag to file
+	fd:seek ( "set" , starttag )
+	print(fd:seek("cur"),starttag,sizetofitinto,#tag,amountofpadding)
+	if not dontwrite then
+		if sizetofitinto == #tag then -- We fit exactly in, hooray!
+			print("Tag fits!")
+		elseif footer then -- Is a footer, we don't care about it's length.
+			print("Tag should be appended, position ", starttag )
+		elseif sizetofitinto < #tag then -- We don't fit, will have to rewrite file
+			print("Damn, rewriting tag")
+		end
+	end
+	
+	return tag
 end
 
 function edit ( )
