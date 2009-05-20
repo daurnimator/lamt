@@ -49,18 +49,18 @@ local encodings = {
 	[ 2 ] = { name = "UTF-16BE" , nulls = "2" } , 
 	[ 3 ] = { name = "UTF-8" , nulls = "1" } , 
 }
--- Converts string in specified encoding to utf8
-local function utf8 ( str , encoding )
+-- Converts string in specified encoding to utf16
+local function utf16 ( str , encoding )
 	if not encoding then encoding = "ISO-8859-1" end
-	return iconv.new ( "UTF-8" ,  encoding ):iconv ( str )
+	return iconv.new ( "UTF-16" ,  encoding ):iconv ( str )
 end
 -- Converts string in specified encoding to ascii (iso-8859-1)
 local function ascii ( str , encoding )
-	if not encoding then encoding = "UTF-8" end
+	if not encoding then encoding = "UTF-16" end
 	return iconv.new ( "ISO-8859-1" ,  encoding ):iconv ( str )
 end
 
-local function readheader ( fd )
+function readheader ( fd )
 	local t = vstruct.unpack ( "> ident:s3 version:u1 revision:u1 flags:m1 safesyncsize:m4" , fd )
 	if ( t.ident == "ID3" or t.ident == "3DI" ) then
 		t.size = desafesync ( t.safesyncsize )
@@ -107,14 +107,15 @@ local function readheader ( fd )
 	end
 end
 
+-- An index for how to convert internal tags to their id3v2 frame ids. returns a table where the index is the corresponding frame's id for the indexed id3 version
 local frameencode = {
-	[ "uniquefileid" ] = "UFID" ,
-	[ "content group" ] = "TIT1" ,
-	[ "title" ] = "TIT2" ,
-	[ "subtitle" ] = "TIT3" ,
-	[ "album" ] = "TALB" ,
-	[ "original album" ] = "TOAL" ,
-	[ "tracknumber" ] = function ( tags )
+	[ "uniquefileid" ] = { false , "UFI" , "UFID" , "UFID" } ,
+	[ "content group" ] = { false , "TT1" , "TIT1" , "TIT1" } ,
+	[ "title" ] = { false , "TT2" , "TIT2" , "TIT2" } ,
+	[ "subtitle" ] = { false , "TT3" , "TIT3" , "TIT3" } ,
+	[ "album" ] = { false , "TAL" , "TALB" , "TALB" } ,
+	[ "original album" ] = { false , "TOT" , "TOAL" , "TOAL" } ,
+	[ "tracknumber" ] = function ( tags , id3version )
 		local t = { }
 		for i , v in ipairs ( tags [ "tracknumber" ] or { } ) do
 			if tags [ "totaltracks" ] [ i ] then
@@ -123,14 +124,16 @@ local frameencode = {
 				table.insert ( t , tostring ( v ) ) 
 			end	
 		end
-		return "TRCK" , t , false
+		local id = { false , "TRK" , "TRCK" , "TRCK" }
+		return id [ id3version ] , t , false
 	end ,
-	[ "totaltracks" ] = function ( tags )
+	[ "totaltracks" ] = function ( tags , id3version )
 		if not tags [ "tracknumber" ] [ i ] then -- If not going to put in with tracknumber in TRCK, put in TXXX
-			return "TXXX" , nil , false
+			local id = { false , "TXX" , "TXXX" , "TXXX" }
+			return id [ id3version ] , nil , false
 		end
 	end ,
-	[ "discnumber" ] = function ( tags )
+	[ "discnumber" ] = function ( tags , id3version )
 		local t = { }
 		for i , v in ipairs ( tags [ "discnumber" ] or { } ) do
 			if tags [ "totaldiscs" ] [ i ] then
@@ -139,65 +142,67 @@ local frameencode = {
 				table.insert ( t , tostring ( v ) ) 
 			end	
 		end
-		return "TPOS" , t , false
+		local id = { false , "TPA" , "TPOS" , "TPOS" }
+		return id [ id3version ] , t , false
 	end ,	
-	[ "totaldiscs" ] = function ( tags )
+	[ "totaldiscs" ] = function ( tags , id3version )
 		if not tags ["discnumber"] [i] then -- If not going to put in with discnumber in TPOS, put in TXXX
-			return "TXXX" , nil , false
+			local id = { false , "TXX" , "TXXX" , "TXXX" }
+			return id [ id3version ] , nil , false
 		end
 	end ,
-	[ "set subtitle" ] = "TSST" ,
-	[ "isrc" ] = "TSRC" ,
+	[ "set subtitle" ] = { false , "TXX" , "TSST" , "TSST" } ,
+	[ "isrc" ] = { false , "TRC" , "TSRC" , "TSRC" } ,
 
-	[ "artist" ] = "TPE1" ,
-	[ "band" ] = "TPE2" ,
-	[ "conductor" ] = "TPE3" , 
-	[ "remixed by" ] = "TPE4" ,
-	[ "original artist" ] = "TOPE" ,
-	[ "writer" ] = "TEXT" ,
-	[ "original writer" ] = "TOLY" ,
-	[ "composer" ] = "TCOM" ,
+	[ "artist" ] = { false , "TP1" , "TPE1" , "TPE1" } ,
+	[ "band" ] = { false , "TP2" , "TPE2" , "TPE2" } ,
+	[ "conductor" ] = { false , "TP3" , "TPE3" , "TPE3" } ,
+	[ "remixed by" ] = { false , "TP4" , "TPE4" , "TPE4" } ,
+	[ "original artist" ] = { false , "TOA" , "TOPE" , "TOPE" } ,
+	[ "writer" ] = { false , "TXT" , "TEXT" , "TEXT" } ,
+	[ "original writer" ] = { false , "TOL" , "TOLY" , "TOLY" } ,
+	[ "composer" ] = { false , "TCM" , "TCOM" , "TCOM" } ,
 	-- TODO: TMCL (list) -- Some sort of metatable? need to match things ending in "player"
 	-- TODO: TIPL (list) -- metatable? could be anything though...
-	[ "encoded by" ] = "TENC" ,
+	[ "encoded by" ] = { false , "TEN" , "TENC" , "TENC" } ,
 	
-	[ "bpm" ] = "TBPM" ,
-	[ "length" ] = "TLEN" ,
-	[ "musical key" ] = "TKEY" ,
-	[ "language" ] = "TLAN" ,
-	[ "genre" ] = "TCON" , -- Special
-	[ "file type" ] = "TFLT" , -- Special
-	[ "media type" ] = "TMED" , -- Special
-	[ "mood" ] = "TMOO" ,
-	[ "copyright" ] = "TCOP" , -- Special
-	[ "produced" ] = "TPRO" , -- Special
-	[ "publisher" ] = "TPUB" ,
-	[ "owner" ] = "TOWN" ,
-	[ "radio station" ] = "TRSN" ,
-	[ "radio station owner" ] = "TRSO" ,
+	[ "bpm" ] = { false , "TBP" , "TBPM" , "TBPM" } ,
+	[ "length" ] = { false , "TLE" , "TLEN" , "TLEN" } ,
+	[ "musical key" ] = { false , "TKE" , "TKEY" , "TKEY" } ,
+	[ "language" ] = { false , "TLA" , "TLAN" , "TLAN" } ,
+	[ "genre" ] = { false , "TCO" , "TCON" , "TCON" } , -- Special
+	[ "file type" ] = { false , "TFT" , "TFLT" , "TFLT" } , -- Special
+	[ "media type" ] = { false , "TMT" , "TMED" , "TMED" } , -- Special
+	[ "mood" ] = { false , "TXX" , "TXXX" , "TMOO" } ,
+	[ "copyright" ] = { false , "TCR" , "TCOP" , "TCOP" } , -- Special
+	[ "produced" ] = { false , "TXX" , "TXXX" , "TPRO" } , -- Special
+	[ "publisher" ] = { false , "TPB" , "TPUB" , "TPUB" } ,
+	[ "owner" ] = { false , "TXX" , "TOWN" , "TOWN" } ,
+	[ "radio station" ] = { false , "TXX" , "TRSN" , "TRSN" } ,
+	[ "radio station owner" ] = { false , "TXX" , "TRSO" , "TRSP" } ,
 	
-	[ "publisher" ] = "TOFN" ,
-	--[ "delay" ] = "TDLY" , -- Special
-	[ "encoding time" ] = "TDEN" , -- Special: Time
-	[ "original release time" ] = "TDOR" , -- Special: Time
-	[ "date" ] = "TDRC" , -- Special: Time
-	[ "release time" ] = "TDRL" , -- Special: Time
-	[ "tagged" ] = "TDTG" , -- Special: Time
-	[ "encoder settings" ] = "TSSE" ,
-	[ "album sort order" ] = "TSOA" ,
-	[ "performer sort order" ] = "TSOP" ,
-	[ "title sort order" ] = "TSOT" ,
+	[ "original filename" ] = { false , "TOF" , "TOFN" , "TOFN" } ,
+	--[ "delay" ] = { false , "TDLY" , -- Special
+	[ "encoding time" ] = { false , "TXX" , "TXXX" , "TDEN" } , -- Special: Time
+	[ "original release time" ] = { false , "TOR" , "TORY" , "TDOR" } , -- Special: Time
+	[ "date" ] = { false , "TDA" , "TDAT" , "TDRC" } , -- Special: Time
+	[ "release time" ] = { false , "TXX" , "TXXX" , "TDRL" } , -- Special: Time
+	[ "tagged" ] = { false , "TXX" , "TXXX" , "TDTG" } , -- Special: Time
+	[ "encoder settings" ] = { false , "TSS" , "TSSE" , "TSSE" } ,
+	[ "album sort order" ] = { false , "TXX" , "TXXX" , "TSOA" } ,
+	[ "performer sort order" ] = { false , "TXX" , "TXXX" , "TSOP" } ,
+	[ "title sort order" ] = { false , "TXX" , "TXXX" , "TSOT" } ,
 	
-	[ "commercial information url" ] = "WCOM" ,
-	[ "copyright url" ] = "WCOP" ,
-	[ "file webpage url" ] = "WOAF" ,
-	[ "artist webpage url" ] = "WOAR" ,
-	[ "source webpage url" ] = "WOAS" , 
-	[ "internet radio webpage url" ] = "WORS" , 
-	[ "payment url" ] = "WPAY" , 
-	[ "publisher url" ] = "WPUB" ,
+	[ "commercial information url" ] = { false , "WCM" , "WCOM" , "WCOM" } ,
+	[ "copyright url" ] = { false , "WCP" , "WCOP" , "WCOP" } ,
+	[ "file webpage url" ] = { false , "WAF" , "WOAF" , "WOAF" } ,
+	[ "artist webpage url" ] = { false , "WAR" , "WOAR" , "WOAR" } ,
+	[ "source webpage url" ] = { false , "WAS" , "WOAS" , "WOAS" } ,
+	[ "internet radio webpage url" ] = { false , "WXX" , "WORS" , "WORS" } ,
+	[ "payment url" ] = { false , "WXX" , "WPAY" , "WPAY" } ,
+	[ "publisher url" ] = { false , "WPB" , "WPUB" , "WPUB" } ,
 	
-	[ "cd toc" ] = "MCDI" ,
+	[ "cd toc" ] = { false , "MCI" , "MDCI" , "MDCI" } ,
 	
 	-- ETCO -- Event timing codes
 	-- MLLT -- Not applicable
@@ -211,15 +216,16 @@ local frameencode = {
 	-- SYLT -- Synchronised lyrics/text
 	
 	-- Comment
-	["comment"] = function ( tags )
-		local e = 3 -- Encoding, 3 is UTF-8
+	["comment"] = function ( tags , id3version )
+		local e = 1 -- Encoding, 1 is UTF-16
 		local language = "eng" -- 3 character language
 		local t = { }
 		for i , v in ipairs ( tags [ "comment" ] ) do
-			local shortdescription = ""--utf8 ( "Comment #" .. i ) -- UTF-8 string
-			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf8 ( v )
+			local shortdescription = ""--utf16 ( "Comment #" .. i ) -- UTF-16 string
+			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v )
 		end
-		return "COMM" , t , false
+		local id = { false , "COM" , "COMM" , "COMM" }
+		return id [ id3version ] , t , false
 	end ,
 	
 	-- RVA2 -- Relative volume adjustment (2)
@@ -242,11 +248,13 @@ local frameencode = {
 	-- POSS -- Position synchronisation frame
 	
 	-- Terms of use frame
-	[ "terms of use" ] = function ( tags )
-		local e = 3 -- Encoding, 3 is UTF-8
+	[ "terms of use" ] = function ( tags , id3version )
+		local e = 1 -- Encoding, 1 is UTF-16
 		local language = "eng" -- 3 character language
-		local s = string.char ( e ) .. language .. utf8 (  tags [ "terms of use" ] [ 1 ] )
-		return "USER" , { s } , toboolean ( v [ 2 ] )
+		local s = string.char ( e ) .. language .. utf16 (  tags [ "terms of use" ] [ 1 ] )
+		
+		local id = { false , "TXXX" , "USER" , "USER" }
+		return id [ id3version ]  , { s } , toboolean ( v [ 2 ] )
 	end ,
 	
 	-- OWNE -- Ownership frame
@@ -269,7 +277,7 @@ local function readtextframe ( str )
 	local r = { }
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
-			r [ #r + 1 ] = utf8 ( v , encodings [ t.encoding ].name )
+			r [ #r + 1 ] = utf16 ( v , encodings [ t.encoding ].name )
 		end
 	end
 	return r
@@ -487,7 +495,7 @@ local framedecode = {
 		local r = { }
 		for i , v in ipairs ( st ) do
 			if #v ~= 0 then
-				r [ #r + 1 ] = utf8 ( v , encodings [ t.encoding ].name )
+				r [ #r + 1 ] = utf16 ( v , encodings [ t.encoding ].name )
 			end
 		end
 		return { [ string.lower ( t.field ) ] =  r }
@@ -629,22 +637,40 @@ local framedecode = {
 
 	["ASPI"] = function ( str ) -- Audio seek point index
 	end ,
-
-	-- ID3v2.3 frames (Older frames)
-	["TORY"] = function ( str ) -- Year
-		return { [ "original release time" ] = readtextframe ( str ) }
-	end ,
-	["TYER"] = function ( str ) -- Year
-		return { [ "date" ] = readtextframe ( str ) }
-	end ,
 }
-do -- ID3v2.2 frames -- RAWWWWWWWRRRRRRR
+do -- ID3v2.3 frames (Older frames) -- See http://id3.org/id3v2.4.0-changes
+	framedecode["EQUA"] = function ( str ) -- Equalization
+	end
+	framedecode["IPLS"] = function ( str ) -- Involved people list
+	end
+	framedecode["RVAD"] = function ( str ) -- Relative volume adjustment
+	end
+	
+	framedecode["TDAT"] = function ( str ) -- Date
+		return { [ "date" ] = readtextframe ( str ) }
+	end
+	framedecode["TIME"] = function ( str ) -- Time
+		return { [ "date" ] = readtextframe ( str ) }
+	end
+	framedecode["TORY"] = function ( str ) -- Year
+		return { [ "original release time" ] = readtextframe ( str ) }
+	end
+	framedecode["TRDA"] = function ( str ) -- Recording Dates
+		return { [ "date" ] = readtextframe ( str ) }
+	end
+	framedecode["TSIZ"] = function ( str ) -- Size -- Pointless, completely deprecated
+	end
+	framedecode["TYER"] = function ( str ) -- Year
+		return { [ "date" ] = readtextframe ( str ) }
+	end
+end
+do -- ID3v2.2 frames -- Generally exactly maps to ID3v2.3 standard
 	framedecode["BUF"] = framedecode["RBUF"]
 	
 	framedecode["CNT"] = framedecode["PCNT"]
 	framedecode["COM"] = framedecode["COMM"]
 	framedecode["CRA"] = framedecode["AENC"]
-	-- CRM
+	--framedecode["CRM"] = 
 	framedecode["EQU"] = framedecode["EQUA"]
 	framedecode["ETC"] = framedecode["ETCO"]
 	
@@ -655,7 +681,7 @@ do -- ID3v2.2 frames -- RAWWWWWWWRRRRRRR
 	framedecode["MCI"] = framedecode["MDCI"]
 	framedecode["MLL"] = framedecode["MLLT"]
 	
-	-- PIC
+	-- framedecode["PIC"] = 
 	framedecode["POP"] = framedecode["POPM"]
 	framedecode["REV"] = framedecode["RVRB"]
 	framedecode["RVA"] = framedecode["RVAD"]
@@ -805,7 +831,7 @@ local function readframe ( fd , header )
 				--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
 				return ( framedecode [ ok.id ] ( frame ) or { } )
 			else -- We don't know of this frame type
-				print ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
+				updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
 				return { }
 			end
 		else
@@ -863,26 +889,28 @@ end
 
 -- Make frames from tags
  -- Returns a table where each entry is a frame
-local function generateframes ( tags )
-	local newframes = { }
+local function generateframes ( tags , id3version )
+	local newframes , datadiscarded = { } , false
 	for k , v in pairs ( tags ) do
 		local r = frameencode [ k ]
 		if type ( r ) == "function" then
 			local a , b
-			r , a , b = r ( tags )
+			r , a , b = r ( tags , id3version )
 			v = a or v
 			datadiscarded = b or datadiscarded
+		elseif type ( r ) == "table" then
+			r = r [ id3version ]
 		end
 		if type ( r ) == "string" then
-			if string.sub ( r , 1 , 1 ) == "T"  and r ~= "TXXX" then -- Standard defined Text field
-				local e = 3 -- Encoding, 3 is UTF-8
+			if string.sub ( r , 1 , 1 ) == "T"  and not ( r == "TXXX" or r == "TXX" ) then -- Standard defined Text field
+				local e = 1 -- Encoding, 1 is UTF-16
 				local s = string.char ( e ) .. v [ 1 ]
 				for i =2 , #v do
 					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
 				end
 				newframes [ #newframes + 1 ] = { r , s }
-			elseif string.sub ( r , 1 , 1 ) == "W" and r ~= "WXXX" then -- Standard defined Link field
-				newframes [ #newframes + 1 ] = { r , ascii ( v [ 1 ] , "UTF-8" ) } -- Only allowed one url per field
+			elseif string.sub ( r , 1 , 1 ) == "W" and not ( r == "WXXX" or r == "WXX" ) then -- Standard defined Link field
+				newframes [ #newframes + 1 ] = { r , ascii ( v [ 1 ] , "UTF-16" ) } -- Only allowed one url per field
 				if v [ 2 ] then datadiscarded = true end
 			else -- Assume binary data
 				for i , bin in ipairs ( v ) do
@@ -891,29 +919,34 @@ local function generateframes ( tags )
 			end
 		elseif not r then
 			if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( k , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
-				r = "WXXX"
-				local e = 3 -- Encoding, 3 is UTF-8
+				r = ( ( id3version == 2 ) and "WXX" ) or "WXXX"
+				local e = 1 -- Encoding, 1 is UTF-16
 				k = k:match ( "(.+)url" ) or k
-				newframes [ #newframes + 1 ] = { r , string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) }
+				newframes [ #newframes + 1 ] = { r , string.char ( e ) .. utf16 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) }
 				if v [ 2 ] then datadiscarded = true end
 			else	-- Put in a TXXX field
-				r = "TXXX"
-				local e = 3 -- Encoding, 3 is UTF-8
-				local s = string.char ( e ) .. utf8 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ 1 ]
+				r = ( ( id3version == 2 ) and "TXX" ) or "TXXX"
+				local e = 1 -- Encoding, 1 is UTF-16
+				local s = string.char ( e ) .. utf16 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ 1 ]
 				for i =2 , #v do
 					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
 				end
 				newframes [ #newframes + 1 ] = { r , s }
 			end
 		end
-		newframes [ #newframes ] [ 3 ] = "\0\0" -- Index three contains flags
+		newframes [ #newframes ] [ 3 ] = "\0\0" -- Index three contains the frame flags, set all flags to false
 	end
-	return newframes
+	return newframes , datadiscarded
 end
 
-function generatetag ( tags , fd , footer , dontwrite )
-	local newframes = generateframes ( tags )
+function generatetag ( tags , fd , id3version , footer , dontwrite )
+	id3version = id3version or 4
+	if footer and id3version ~= 4 then return ferror ( "Tried to write id3v2 tag to footer that wasn't version 4" , 3 ) end
 	
+	-- Generate tags for the new data
+	local frames , datadiscarded = generateframes ( tags , id3version ) 
+	
+	-- Look for details about where to put tag
 	local starttag = find ( fd )
 	local sizetofitinto = 0 -- Size available to fit into from value of starttag
 	
@@ -951,21 +984,21 @@ function generatetag ( tags , fd , footer , dontwrite )
 			t = { }
 
 		end--]]
-	else -- File had no tag
+	else -- File has no tag
 		if footer then starttag = fd:seek ( "end" )
 		else starttag = 0 end
 	end
 	
-	local datadiscarded = false
-	
 	-- Check for doubled up frames
-	local readyframes = generateframes ( tags )
+	local readyframes = frames
 		
 	-- Add frame headers
 	for i , v in ipairs ( readyframes ) do
 		local size = #v [ 2 ]
-		--print(v[1],v[2],v[3],#v[2])
-		readyframes [ i ] = vstruct.pack ( "> s m4 s2 s" , { v [ 1 ] , makesafesync ( size ) , v [ 3 ] , v [ 2 ] } )
+		local tblsize
+		if id3version == 4 then tblsize = makesafesync ( size ) 
+		else tblsize = vstruct.explode ( size ) end
+		readyframes [ i ] = vstruct.pack ( "> s m4 s2 s" , { v [ 1 ] , tblsize , v [ 3 ] , v [ 2 ] } )
 	end
 	
 	-- Put frames together
@@ -974,7 +1007,6 @@ function generatetag ( tags , fd , footer , dontwrite )
 	-- compress,encrypt,unsync?
 	
 	-- Generate header
-	local id3version = "4"
 	local flags = { false , false , false , false , false , false , false , false }
 	-- Put it all together
 	local amountofpadding
@@ -985,7 +1017,7 @@ function generatetag ( tags , fd , footer , dontwrite )
 	end
 	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
 	
-	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , id3version, flags , makesafesync ( #padded ) , padded } ) , datadiscarded
+	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , tostring ( id3version ), flags , makesafesync ( #padded ) , padded } ) , datadiscarded
 
 	-- Write tag to file
 	fd:seek ( "set" , starttag )
