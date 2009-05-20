@@ -70,13 +70,16 @@ local function readheader ( fd )
 		if t.version > 4 then
 			return false , "Newer id3v2 version"
 		elseif t.version == 4 then
+			t.frameheadersize = 10
 			t.hasextendedheader = t.flags [ 7 ]
 			t.experimental = t.flags [ 6 ]
 			t.isfooter = t.flags [ 5 ]
 		elseif t.version == 3 then
+			t.frameheadersize = 10
 			t.hasextendedheader = t.flags [ 7 ]
 			t.experimental = t.flags [ 6 ]
 		elseif t.version == 2 then
+			t.frameheadersize = 6
 		end
 		if t.hasextendedheader then
 			local safesyncsize = vstruct.unpack ( "> safesyncsize:m4" , fd ).safesyncsize
@@ -783,12 +786,12 @@ do -- ID3v2.2 frames -- Generally exactly maps to ID3v2.3 standard
 	framedecode["WXX"] = framedecode["WXXX"]
 end
 
--- Read 6 or 10 byte frame header
+-- Read frame header
 local function readframeheader ( fd , header )
 	if header.version >= 3 then
 		local t = vstruct.unpack ( "> id:s4 safesyncsize:m4 statusflags:m1 formatflags:m1" , fd )
 		if t.id == "\0\0\0\0" then -- padding
-			fd:seek ( "cur" , - 10 ) -- Rewind to what would have been start of frame
+			fd:seek ( "cur" , -header.frameheadersize ) -- Rewind to what would have been start of frame
 			return false , "padding"
 		else
 			t.framesize = vstruct.implode ( t.safesyncsize )
@@ -829,19 +832,19 @@ local function readframeheader ( fd , header )
 				end
 			end
 			t.startcontent = fd:seek ( "cur" )
-			t.startheader = fd:seek ( "cur" , -10 )
+			t.startheader = fd:seek ( "cur" , -header.frameheadersize )
 			t.safesyncsize = nil
 			return t
 		end
 	elseif header.version == 2 then -- id3v2.2
 		local t = vstruct.unpack ( "> id:s3 size:u3" , fd )
 		if t.id == "\0\0\0" then -- padding
-			fd:seek ( "cur" , -6 ) -- Rewind to what would have been start of frame
+			fd:seek ( "cur" , -header.frameheadersize ) -- Rewind to what would have been start of frame
 			return false , "padding"
 		else
 			t.framesize = t.size
 			t.startcontent = fd:seek ( "cur" )
-			t.startheader = fd:seek ( "cur" , -6 )
+			t.startheader = fd:seek ( "cur" , -header.frameheadersize )
 			return t
 		end
 	end
@@ -916,7 +919,7 @@ function info ( fd , location , item )
 				:gsub ( "\255%z%z" ,  "\255\0" )
 		end
 		local sd = vstruct.cursor ( id3tag )
-		while sd:seek ( "cur" ) < ( header.size - 6 ) do
+		while sd:seek ( "cur" ) < ( header.size - header.frameheadersize ) do
 			local ok , err = readframe ( sd , header )
 			if ok then
 				table.inherit ( item.tags , ok , true )
@@ -934,9 +937,104 @@ end
 
 -- Make frames from tags
  -- Returns a table where each entry is a frame
-local function generateframes ( tags , id3version )
-	local newframes , datadiscarded = { } , false
+local function generateframes ( humanname , r , v , id3version )
+	local datadiscarded
+	if type ( r ) == "string" then
+		if string.sub ( r , 1 , 1 ) == "T"  and not ( r == "TXXX" or r == "TXX" ) then -- Standard defined Text field
+			local e = 1 -- Encoding, 1 is UTF-16
+			local s = string.char ( e ) .. v [ 1 ]
+			for i =2 , #v do
+				s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
+			end
+			return { id = r , contents = s } , datadiscarded
+		elseif string.sub ( r , 1 , 1 ) == "W" and not ( r == "WXXX" or r == "WXX" ) then -- Standard defined Link field
+			return { id = r , contents = ascii ( v [ 1 ] , "UTF-16" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
+		else -- Assume binary data
+			for i , bin in ipairs ( v ) do
+				return { id = r , contents = bin } , datadiscarded
+			end
+		end
+	elseif not r and v then
+		if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( humanname , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
+			r = ( ( id3version == 2 ) and "WXX" ) or "WXXX"
+			local e = 1 -- Encoding, 1 is UTF-16
+			humanname = humanname:match ( "(.*)url" ) or humanname
+			return { id = r , contents = string.char ( e ) .. utf16 ( humanname ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) } , ( v [ 2 ] or datadiscarded )
+		else	-- Put in a TXXX field
+			r = ( ( id3version == 2 ) and "TXX" ) or "TXXX"
+			local e = 1 -- Encoding, 1 is UTF-16
+			local s = string.char ( e ) .. utf16 ( humanname ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ 1 ]
+			for i =2 , #v do
+				s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
+			end
+			return { id = r , contents = s } , datadiscarded
+		end
+	end
+end
+
+function generatetag ( tags , fd , id3version , footer , dontwrite )
+	id3version = id3version or 4
+	if footer and id3version ~= 4 then return ferror ( "Tried to write id3v2 tag to footer that wasn't version 4" , 3 ) end
+	
+	local datadiscarded = false
+
+	-- Look for details about where to put tag
+	local starttag = find ( fd )
+	local sizetofitinto = 0 -- Size available to fit into from value of starttag
+	
+	local existing = { }
+	if starttag then -- File has existing tag
+		local t
+		if io.type ( fd ) then -- Get existing tag
+			fd:seek ( "set" , starttag )
+			local header , err = readheader ( fd )
+			if header then
+				t = { version = header.version }
+				local id3tag = fd:read ( header.size )
+				if header.unsynched then
+					id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+						:gsub ( "\255%z%z" ,  "\255\0" )
+				end
+				local sd = vstruct.cursor ( id3tag )
+				while sd:seek ( "cur" ) < ( header.size - header.frameheadersize  ) do
+					local ok , err = readframeheader ( sd , header )
+					if ok then
+						--[[if ok.tagalterpreserv then -- Preserve
+							--t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
+						elseif
+						else
+							
+						end--]]
+						local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
+						if err then -- If can't decode, skip over the frame
+							--return ferror ( err , 5 )
+						else
+							t [ #t + 1 ] = { id = ok.id , contents = frame , statusflags = ok.statusflags , formatflags = ok.formatflags }
+						end
+					elseif err == "padding" then
+						break
+					end
+				end
+				t.paddingstart = fd:seek ( "cur" )
+				t.paddingend = header.size - starttag
+				sizetofitinto = 10 + header.size
+			end
+		end
+		-- Convert to correct id3v2 version
+		if t.version == id3version then
+			existing = t
+		else
+			--TODO convert tag versions
+		end
+	else -- File has no tag
+		if footer then starttag = fd:seek ( "end" )
+		else starttag = 0 end
+	end
+	
+	-- Generate tags for the new data
+	local frames = { }
 	for k , v in pairs ( tags ) do
+		-- Get frame 
 		local r = frameencode [ k ]
 		if type ( r ) == "function" then
 			local a , b
@@ -945,92 +1043,22 @@ local function generateframes ( tags , id3version )
 		elseif type ( r ) == "table" then
 			r = r [ id3version ]
 		end
-		if type ( r ) == "string" then
-			if string.sub ( r , 1 , 1 ) == "T"  and not ( r == "TXXX" or r == "TXX" ) then -- Standard defined Text field
-				local e = 1 -- Encoding, 1 is UTF-16
-				local s = string.char ( e ) .. v [ 1 ]
-				for i =2 , #v do
-					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
-				end
-				newframes [ #newframes + 1 ] = { r , s }
-			elseif string.sub ( r , 1 , 1 ) == "W" and not ( r == "WXXX" or r == "WXX" ) then -- Standard defined Link field
-				newframes [ #newframes + 1 ] = { r , ascii ( v [ 1 ] , "UTF-16" ) } -- Only allowed one url per field
-				if v [ 2 ] then datadiscarded = true end
-			else -- Assume binary data
-				for i , bin in ipairs ( v ) do
-					newframes [ #newframes + 1 ] = { r , bin }
-				end
-			end
-		elseif not r and v then
-			if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( k , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
-				r = ( ( id3version == 2 ) and "WXX" ) or "WXXX"
-				local e = 1 -- Encoding, 1 is UTF-16
-				k = k:match ( "(.*)url" ) or k
-				newframes [ #newframes + 1 ] = { r , string.char ( e ) .. utf16 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) }
-				if v [ 2 ] then datadiscarded = true end
-			else	-- Put in a TXXX field
-				r = ( ( id3version == 2 ) and "TXX" ) or "TXXX"
-				local e = 1 -- Encoding, 1 is UTF-16
-				local s = string.char ( e ) .. utf16 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ 1 ]
-				for i =2 , #v do
-					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
-				end
-				newframes [ #newframes + 1 ] = { r , s }
-			end
-		end
-		newframes [ #newframes ] [ 3 ] = "\0\0" -- Index three contains the frame flags, set all flags to false
-	end
-	return newframes , datadiscarded
-end
-
-function generatetag ( tags , fd , id3version , footer , dontwrite )
-	id3version = id3version or 4
-	if footer and id3version ~= 4 then return ferror ( "Tried to write id3v2 tag to footer that wasn't version 4" , 3 ) end
-	
-	-- Generate tags for the new data
-	local frames , datadiscarded = generateframes ( tags , id3version ) 
-	
-	-- Look for details about where to put tag
-	local starttag = find ( fd )
-	local sizetofitinto = 0 -- Size available to fit into from value of starttag
-	
-	if starttag then -- File has existing tag
-		--[[local
-		if io.type ( fd ) then -- Get existing tag
-			fd:seek ( "set" , location )
-			local header = readheader ( fd )
-			if header then
-				t = { }
-				local id3tag = fd:read ( header.size )
-				if header.unsynched then
-					id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-						:gsub ( "\255%z%z" ,  "\255\0" )
-				end
-				local sd = vstruct.cursor ( id3tag )
-				while sd:seek ( "cur" ) < ( header.size - 6 ) do
-					local ok , err = readframeheader ( sd , header )
-					if ok then
-						if ok.tagalterpreserv then -- Preserve as is
-							t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
-						elseif
-						else
-							sd:seek ( "cur" , ok.size )
-						end
-					elseif err == "padding" then
-						break
-					end
-				end
-				t.paddingstart = fd:seek ( "cur" )
-				t.paddingend = t.paddingstart - location + header.size
-			end
-		end
-		if not t then -- New tag from scratch
-			t = { }
-
-		end--]]
-	else -- File has no tag
-		if footer then starttag = fd:seek ( "end" )
-		else starttag = 0 end
+		
+		
+		
+		-- k is name of tag (internall)
+		-- r should now be a string == frame that will come out
+		-- v is table of values to be packed into frame called k
+		
+		
+		-- Generate frame contents
+		local frame , dd = generateframes ( k , r , v , id3version ) 
+		datadiscarded = datadiscarded or dd 
+		frames [ #frames + 1 ] = frame
+		
+		-- Set flags
+		frames [ #frames ].formatflags = { false , false , false , false , false , false , false , false }
+		frames [ #frames ].statusflags = { false , false , false , false , false , false , false , false } -- Index three contains the frame flags, set all flags to false
 	end
 	
 	-- Check for doubled up frames
@@ -1038,15 +1066,16 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 		
 	-- Add frame headers
 	for i , v in ipairs ( readyframes ) do
-		local size = #v [ 2 ]
+		local size = #v.contents
+		if size >= 268435456 then return ferror ( "Tag too large" , 3 ) end
 		local tblsize
 		if id3version == 4 then tblsize = makesafesync ( size ) 
 		else tblsize = vstruct.explode ( size ) end
 		
 		if id3version == 2 then
-			readyframes [ i ] = vstruct.pack ( "> s m3 s" , { v [ 1 ]  , tblsize , v [ 2 ] } )
+			readyframes [ i ] = vstruct.pack ( "> s m3 s" , { v.id  , tblsize , v.contents } )
 		else
-			readyframes [ i ] = vstruct.pack ( "> s m4 s2 s" , { v [ 1 ] , tblsize , v [ 3 ] , v [ 2 ] } )
+			readyframes [ i ] = vstruct.pack ( "> s m4 m1 m1 s" , { v.id , tblsize , v.statusflags , v.formatflags , v.contents } )
 		end
 		
 	end
