@@ -60,7 +60,7 @@ local function ascii ( str , encoding )
 	return iconv.new ( "ISO-8859-1" ,  encoding ):iconv ( str )
 end
 
-function readheader ( fd )
+local function readheader ( fd )
 	local t = vstruct.unpack ( "> ident:s3 version:u1 revision:u1 flags:m1 safesyncsize:m4" , fd )
 	if ( t.ident == "ID3" or t.ident == "3DI" ) then
 		t.size = desafesync ( t.safesyncsize )
@@ -107,6 +107,29 @@ function readheader ( fd )
 	end
 end
 
+local function interpretdatestamp ( str )
+	local tbl = { }
+	local d , t = unpack ( string.explode ( str , "T" ) )
+	local s , e , y = string.find ( d , "^%s*(%d%d%d%d)%f[^%d]" )
+	if y then
+		tbl.year = y
+		d = string.sub ( d , e + 1 )
+	end
+	local s , e , month , day = string.find ( d , "^%s*(%d%d)%s*[/- ]%s*(%d%d)"  )
+	if m then
+		tbl.month = month
+		tbl.day = day
+		d = string.sub ( d , e + 1 )
+	end
+	if not t and string.match ( d , ":" ) then -- Has time
+		-- t = HH:mm:ss of subset there-of
+		t = string.match ( "([^s]+)" ) -- Strip any surrounding chracters
+	end
+	tbl.time = t
+	
+	return tbl
+end
+
 -- An index for how to convert internal tags to their id3v2 frame ids. returns a table where the index is the corresponding frame's id for the indexed id3 version
 local frameencode = {
 	[ "uniquefileid" ] = { false , "UFI" , "UFID" , "UFID" } ,
@@ -128,9 +151,10 @@ local frameencode = {
 		return id [ id3version ] , t , false
 	end ,
 	[ "totaltracks" ] = function ( tags , id3version )
-		if not tags [ "tracknumber" ] [ i ] then -- If not going to put in with tracknumber in TRCK, put in TXXX
+		local spare = #tags [ "totaltracks" ] - #tags [ "tracknumber" ]
+		if spare > 0 then -- If not going to put in with tracknumber in TRCK, put in TXXX
 			local id = { false , "TXX" , "TXXX" , "TXXX" }
-			return id [ id3version ] , nil , false
+			return id [ id3version ] , { unpack ( tags [ "totaltracks" ] , #tags [ "tracknumber" ] + 1 ) }, false
 		end
 	end ,
 	[ "discnumber" ] = function ( tags , id3version )
@@ -146,9 +170,10 @@ local frameencode = {
 		return id [ id3version ] , t , false
 	end ,	
 	[ "totaldiscs" ] = function ( tags , id3version )
-		if not tags ["discnumber"] [i] then -- If not going to put in with discnumber in TPOS, put in TXXX
+		local spare = #tags [ "totaldiscs" ] - #tags [ "discnumber" ]
+		if spare > 0 then -- If not going to put in with discnumber in TPOS, put in TXXX
 			local id = { false , "TXX" , "TXXX" , "TXXX" }
-			return id [ id3version ] , nil , false
+			return id [ id3version ] , { unpack ( tags [ "totaldiscs" ] , #tags [ "discnumber" ] + 1 ) }, false
 		end
 	end ,
 	[ "set subtitle" ] = { false , "TXX" , "TSST" , "TSST" } ,
@@ -185,7 +210,21 @@ local frameencode = {
 	--[ "delay" ] = { false , "TDLY" , -- Special
 	[ "encoding time" ] = { false , "TXX" , "TXXX" , "TDEN" } , -- Special: Time
 	[ "original release time" ] = { false , "TOR" , "TORY" , "TDOR" } , -- Special: Time
-	[ "date" ] = { false , "TDA" , "TDAT" , "TDRC" } , -- Special: Time
+	[ "date" ] = function ( tags , id3version )
+		if id3version == 4 then return "TDRC" , tags [ "date" ] , false
+		else 
+			local t , datadiscarded = { } , false
+			for i , v in pairs ( tags [ "date" ] ) do
+				local d = interpretdatestamp ( ascii ( v , "UTF-16" ) )
+				--  Should use all: TYER, TDAT , TIME , TDRA
+				if t.time or t.month or t.day then datadiscarded = true end
+				t [ #t + 1 ] = utf16 ( d.year , "ISO-8859-1" )
+			end
+			local id = { false , "TYE" , "TYER" }
+			return id [ id3version ] , t , datadiscarded
+		end
+	end ,
+	--{ false , "TDA" , "TDAT" , "TDRC" } , -- Special: Time
 	[ "release time" ] = { false , "TXX" , "TXXX" , "TDRL" } , -- Special: Time
 	[ "tagged" ] = { false , "TXX" , "TXXX" , "TDTG" } , -- Special: Time
 	[ "encoder settings" ] = { false , "TSS" , "TSSE" , "TSSE" } ,
@@ -273,7 +312,7 @@ local frameencode = {
 
 local function readtextframe ( str )
 	local t = vstruct.unpack ( "> encoding:u1 text:s" .. #str - 1 , str )
-	local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) )
+	local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) , true )
 	local r = { }
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
@@ -491,7 +530,7 @@ local framedecode = {
 	["TXXX"] = function ( str ) -- Custom text frame
 		local t = vstruct.unpack ( "> encoding:u1 field:z text:s" .. #str - 2 , str )
 		t.text = string.match ( t.text or ""  , "^%z*(.*)" ) or "" -- Strip any leading nulls
-		local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) )
+		local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) , true )
 		local r = { }
 		for i , v in ipairs ( st ) do
 			if #v ~= 0 then
@@ -646,8 +685,14 @@ do -- ID3v2.3 frames (Older frames) -- See http://id3.org/id3v2.4.0-changes
 	framedecode["RVAD"] = function ( str ) -- Relative volume adjustment
 	end
 	
-	framedecode["TDAT"] = function ( str ) -- Date
-		return { [ "date" ] = readtextframe ( str ) }
+	framedecode["TDAT"] = function ( str ) -- Date in DDMM form
+		local t = { }
+		for i , v in ipairs ( readtextframe ( str ) ) do
+			local day = string.sub ( v , 1 , 2 )
+			local month = string.sub ( v , 3 , 4 )
+			t [ #t + 1 ] = month .. "-" .. day
+		end
+		return { [ "date" ] = t }
 	end
 	framedecode["TIME"] = function ( str ) -- Time
 		return { [ "date" ] = readtextframe ( str ) }
@@ -895,8 +940,7 @@ local function generateframes ( tags , id3version )
 		local r = frameencode [ k ]
 		if type ( r ) == "function" then
 			local a , b
-			r , a , b = r ( tags , id3version )
-			v = a or v
+			r , v , b = r ( tags , id3version )
 			datadiscarded = b or datadiscarded
 		elseif type ( r ) == "table" then
 			r = r [ id3version ]
@@ -917,11 +961,11 @@ local function generateframes ( tags , id3version )
 					newframes [ #newframes + 1 ] = { r , bin }
 				end
 			end
-		elseif not r then
+		elseif not r and v then
 			if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( k , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
 				r = ( ( id3version == 2 ) and "WXX" ) or "WXXX"
 				local e = 1 -- Encoding, 1 is UTF-16
-				k = k:match ( "(.+)url" ) or k
+				k = k:match ( "(.*)url" ) or k
 				newframes [ #newframes + 1 ] = { r , string.char ( e ) .. utf16 ( k ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) }
 				if v [ 2 ] then datadiscarded = true end
 			else	-- Put in a TXXX field
@@ -998,7 +1042,13 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 		local tblsize
 		if id3version == 4 then tblsize = makesafesync ( size ) 
 		else tblsize = vstruct.explode ( size ) end
-		readyframes [ i ] = vstruct.pack ( "> s m4 s2 s" , { v [ 1 ] , tblsize , v [ 3 ] , v [ 2 ] } )
+		
+		if id3version == 2 then
+			readyframes [ i ] = vstruct.pack ( "> s m3 s" , { v [ 1 ]  , tblsize , v [ 2 ] } )
+		else
+			readyframes [ i ] = vstruct.pack ( "> s m4 s2 s" , { v [ 1 ] , tblsize , v [ 3 ] , v [ 2 ] } )
+		end
+		
 	end
 	
 	-- Put frames together
@@ -1009,31 +1059,32 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 	-- Generate header
 	local flags = { false , false , false , false , false , false , false , false }
 	-- Put it all together
+	local sizeheader = 10
 	local amountofpadding
-	if sizetofitinto > ( #allframes  + 10 ) then
-		amountofpadding = sizetofitinto - 10 - #allframes -- TODO: detect extended headers
+	if sizetofitinto > ( #allframes  + sizeheader ) then
+		amountofpadding = sizetofitinto - sizeheader - #allframes -- TODO: detect extended headers
 	else
 		amountofpadding = #allframes -- Double the room we're already taking up
 	end
 	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
 	
-	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , tostring ( id3version ), flags , makesafesync ( #padded ) , padded } ) , datadiscarded
-
+	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , tostring ( id3version ), flags , makesafesync ( #padded ) , padded } )
+	--return tag end--[[
 	-- Write tag to file
 	fd:seek ( "set" , starttag )
-	print(fd:seek("cur"),starttag,sizetofitinto,#tag,amountofpadding)
+	print("Write starts at" , starttag , "Have this much room:" , sizetofitinto , "Need this much room:" , sizeheader + #allframes , "Padding this much:" , amountofpadding , "Tag + padding=" , #tag )
 	if not dontwrite then
 		if sizetofitinto == #tag then -- We fit exactly in, hooray!
 			print("Tag fits!")
 		elseif footer then -- Is a footer, we don't care about it's length.
 			print("Tag should be appended, position ", starttag )
 		elseif sizetofitinto < #tag then -- We don't fit, will have to rewrite file
-			print("Damn, rewriting tag")
+			print("Damn, not enough room, rewriting tag")
 		end
 	end
 	
-	return tag
-end
+	return tag , datadiscarded
+end--]]
 
 function edit ( )
 
