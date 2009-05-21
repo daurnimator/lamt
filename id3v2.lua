@@ -22,22 +22,25 @@ _NAME = "ID3v2 tag reader/writer"
 -- http://www.id3.org/id3v2.4.0-structure
 
 local function desafesync ( tbl )
-	local new = { }
+	local new , nexti = { } , 1
 	for i = 1 , #tbl do
 		if i % 8 ~= 0 then
-			new [ #new + 1 ] = tbl [ i ]
+			new [ nexti ] = tbl [ i ]
+			nexti = nexti + 1
 		end
 	end
 	return vstruct.implode ( new )
 end
 local function makesafesync ( int )
 	local tbl = vstruct.explode ( int )
-	local new = { }
+	local new , nexti = { } , 1
 	for i = 1 , #tbl do
 		if i % 8 == 0 then
-			new [ #new + 1 ] = false
+			new [ nexti ] = false
+			nexti = nexti + 1
 		end
-		new [ #new + 1 ] = tbl [ i ]
+		new [ nexti ] = tbl [ i ]
+		nexti = nexti + 1
 	end
 	return new
 end
@@ -60,7 +63,7 @@ local function ascii ( str , encoding )
 	return iconv.new ( "ISO-8859-1" ,  encoding ):iconv ( str )
 end
 
-local function readheader ( fd )
+function readheader ( fd )
 	local t = vstruct.unpack ( "> ident:s3 version:u1 revision:u1 flags:m1 safesyncsize:m4" , fd )
 	if ( t.ident == "ID3" or t.ident == "3DI" ) then
 		t.size = desafesync ( t.safesyncsize )
@@ -110,25 +113,47 @@ local function readheader ( fd )
 	end
 end
 
+local function twodigit ( str )
+	str = str:gsub( "^%s*(.-)%s*$", "%1" ) -- Trim whitespace
+	if str and #str == 1 then
+		return "0" .. str
+	elseif str and #str == 2 then
+		return str
+	else
+		return nil
+	end
+end
+
 local function interpretdatestamp ( str )
+	str = str:gsub( "^%s*(.-)%s*$", "%1" ) -- Trim whitespace
+	
 	local tbl = { }
 	local d , t = unpack ( string.explode ( str , "T" ) )
 	local s , e , y = string.find ( d , "^%s*(%d%d%d%d)%f[^%d]" )
 	if y then
 		tbl.year = y
-		d = string.sub ( d , e + 1 )
+		d = string.sub ( d , e + 1 ):gsub( "^%s*(.-)%s*$", "%1" )
 	end
 	local s , e , month , day = string.find ( d , "^%s*(%d%d)%s*[/- ]%s*(%d%d)"  )
-	if m then
-		tbl.month = month
-		tbl.day = day
-		d = string.sub ( d , e + 1 )
+	if s then
+		tbl.month = twodigit ( month )
+		tbl.day = twodigit ( day )
+		d = string.sub ( d , e + 1 ):gsub( "^%s*(.-)%s*$", "%1" ) -- Cut off month/date then remove any surrounding whitespace
 	end
-	if not t and string.match ( d , ":" ) then -- Has time
+	if t and #t > 0 then
+		tbl.time = t:gsub( "^%s*(.-)%s*$", "%1" )
+	elseif string.match ( d , ":" ) then -- Has a colon in it (probably a time)
 		-- t = HH:mm:ss of subset there-of
-		t = string.match ( "([^s]+)" ) -- Strip any surrounding chracters
+		tbl.time = d
+		d = ""
 	end
-	tbl.time = t
+	if tbl.time then
+		tbl.hour = twodigit ( string.match ( tbl.time , "^[^%d](%d?%d):" ) or string.match ( tbl.time , "^[^%d](%d?%d)$" ) )
+		tbl.minute = twodigit ( string.match ( tbl.time , ":(%d?%d):" ) or string.match ( tbl.time , "^[^:]:(%d?%d)$" ) )
+		tbl.second = twodigit ( string.match ( tbl.time , ":(%d?%d)[^%d]" ) or string.match ( tbl.time , ":(%d?%d)$" ) )
+	end
+	
+	tbl.left = d
 	
 	return tbl
 end
@@ -142,41 +167,45 @@ local frameencode = {
 	[ "album" ] = { false , "TAL" , "TALB" , "TALB" } ,
 	[ "original album" ] = { false , "TOT" , "TOAL" , "TOAL" } ,
 	[ "tracknumber" ] = function ( tags , id3version )
-		local t = { }
+		local t , nexti = { } , 1
 		for i , v in ipairs ( tags [ "tracknumber" ] or { } ) do
 			if tags [ "totaltracks" ] [ i ] then
-				table.insert ( t , tostring ( v ) .. "/" .. tags [ "totaltracks" ] [i] )
+				t [ i ] = tostring ( v ) .. "/" .. tags [ "totaltracks" ] [i]
 			else
-				table.insert ( t , tostring ( v ) ) 
-			end	
+				t [ i ] = tostring ( v )
+			end
 		end
 		local id = { false , "TRK" , "TRCK" , "TRCK" }
-		return id [ id3version ] , t , false
+		return { { id [ id3version ] , t } } , false
 	end ,
 	[ "totaltracks" ] = function ( tags , id3version )
 		local spare = #tags [ "totaltracks" ] - #tags [ "tracknumber" ]
 		if spare > 0 then -- If not going to put in with tracknumber in TRCK, put in TXXX
 			local id = { false , "TXX" , "TXXX" , "TXXX" }
-			return id [ id3version ] , { unpack ( tags [ "totaltracks" ] , #tags [ "tracknumber" ] + 1 ) }, false
+			return { { id [ id3version ] , { unpack ( tags [ "totaltracks" ] , #tags [ "tracknumber" ] + 1 ) } } }, false
+		else
+			return { } , false
 		end
 	end ,
 	[ "discnumber" ] = function ( tags , id3version )
 		local t = { }
 		for i , v in ipairs ( tags [ "discnumber" ] or { } ) do
 			if tags [ "totaldiscs" ] [ i ] then
-				table.insert ( t , tostring ( v ) .. "/" .. tags [ "totaldiscs" ] [i] )
+				t [ i ] = tostring ( v ) .. "/" .. tags [ "totaldiscs" ] [i]
 			else
-				table.insert ( t , tostring ( v ) ) 
+				t [ i ] = tostring ( v )
 			end	
 		end
 		local id = { false , "TPA" , "TPOS" , "TPOS" }
-		return id [ id3version ] , t , false
+		return { { id [ id3version ] , t } } , false
 	end ,	
 	[ "totaldiscs" ] = function ( tags , id3version )
 		local spare = #tags [ "totaldiscs" ] - #tags [ "discnumber" ]
 		if spare > 0 then -- If not going to put in with discnumber in TPOS, put in TXXX
 			local id = { false , "TXX" , "TXXX" , "TXXX" }
-			return id [ id3version ] , { unpack ( tags [ "totaldiscs" ] , #tags [ "discnumber" ] + 1 ) }, false
+			return { { id [ id3version ] , { unpack ( tags [ "totaldiscs" ] , #tags [ "discnumber" ] + 1 ) } } }, false
+		else
+			return { } , false
 		end
 	end ,
 	[ "set subtitle" ] = { false , "TXX" , "TSST" , "TSST" } ,
@@ -214,20 +243,43 @@ local frameencode = {
 	[ "encoding time" ] = { false , "TXX" , "TXXX" , "TDEN" } , -- Special: Time
 	[ "original release time" ] = { false , "TOR" , "TORY" , "TDOR" } , -- Special: Time
 	[ "date" ] = function ( tags , id3version )
-		if id3version == 4 then return "TDRC" , tags [ "date" ] , false
+		if id3version == 4 then 
+			return { { "TDRC" , tags [ "date" ] } } , false
 		else 
-			local t , datadiscarded = { } , false
-			for i , v in pairs ( tags [ "date" ] ) do
+			local year , date , time , recording , datadiscarded = { encoding = 1 } , { encoding = 1 } , { encoding = 1 } , { } , false
+			for i , v in ipairs ( tags [ "date" ] ) do
 				local d = interpretdatestamp ( ascii ( v , "UTF-16" ) )
-				--  Should use all: TYER, TDAT , TIME , TDRA
-				if t.time or t.month or t.day then datadiscarded = true end
-				t [ #t + 1 ] = utf16 ( d.year , "ISO-8859-1" )
+				year [ #year + 1 ] = d.year
+				date [ #date + 1 ] = d.month and ( ( d.day or "00" ) .. d.month )
+				time [ #time + 1 ] = d.hour and d.hour .. ( d.minute or "00" )
+				if d.left and #d.left > 0 then recording [ #recording + 1 ] = d.left end
 			end
-			local id = { false , "TYE" , "TYER" }
-			return id [ id3version ] , t , datadiscarded
+			local yearid = { false , "TYE" , "TYER" }
+			local dateid = { false , "TDA" , "TDAT" }
+			local timeid = { false , "TIM" , "TIME" }
+			local recordingdatesid = { false , "TRD" , "TRDA" }
+			
+			local t , nexti = { } , 1
+			if #year > 0 then
+				t [ nexti ] = { yearid [ id3version ] , year }
+				nexti = nexti + 1
+			end
+			if #date > 0 then
+				t [ nexti ] = { dateid [ id3version ] , date }
+				nexti = nexti + 1
+			end
+			if #time > 0 then
+				t [ nexti ] = { timeid [ id3version ] , time } 
+				nexti = nexti + 1
+			end
+			if #recording > 0 then
+				t [ nexti ] = { recordingdatesid [ id3version ] , recording }
+				nexti = nexti + 1
+			end
+			
+			return t , datadiscarded
 		end
 	end ,
-	--{ false , "TDA" , "TDAT" , "TDRC" } , -- Special: Time
 	[ "release time" ] = { false , "TXX" , "TXXX" , "TDRL" } , -- Special: Time
 	[ "tagged" ] = { false , "TXX" , "TXXX" , "TDTG" } , -- Special: Time
 	[ "encoder settings" ] = { false , "TSS" , "TSSE" , "TSSE" } ,
@@ -267,7 +319,7 @@ local frameencode = {
 			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v )
 		end
 		local id = { false , "COM" , "COMM" , "COMM" }
-		return id [ id3version ] , t , false
+		return { { id [ id3version ] , t } } , false
 	end ,
 	
 	-- RVA2 -- Relative volume adjustment (2)
@@ -296,7 +348,7 @@ local frameencode = {
 		local s = string.char ( e ) .. language .. utf16 (  tags [ "terms of use" ] [ 1 ] )
 		
 		local id = { false , "TXXX" , "USER" , "USER" }
-		return id [ id3version ]  , { s } , toboolean ( v [ 2 ] )
+		return { id [ id3version ] , { s } } , toboolean ( v [ 2 ] )
 	end ,
 	
 	-- OWNE -- Ownership frame
@@ -316,10 +368,11 @@ local frameencode = {
 local function readtextframe ( str )
 	local t = vstruct.unpack ( "> encoding:u1 text:s" .. #str - 1 , str )
 	local st = string.explode ( t.text , string.rep ( "\0" , encodings [ t.encoding ].nulls ) , true )
-	local r = { }
+	local r , index = { } , 0
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
-			r [ #r + 1 ] = utf16 ( v , encodings [ t.encoding ].name )
+			index = index + 1
+			r [ index ] = utf16 ( v , encodings [ t.encoding ].name )
 		end
 	end
 	return r
@@ -348,18 +401,18 @@ local framedecode = {
 			return { [ "original album" ] = readtextframe ( str ) }
 		end ,
 	["TRCK"] = function ( str ) -- Track number/Position in set
-			local track , total = { } , { }
+			local track , total , totnexti = { } , { } , 1
 			for i , v in ipairs ( readtextframe ( str ) ) do
-				track [ #track + 1 ] , total [ #total + 1 ] = string.match ( v , "([^/]*)/?(.*)" )
-				if total [ #total ] == "" then total [ #total ] = nil end -- string match still fills in the total array
+				track [ #track + 1 ] , total [ totnexti ] = string.match ( v , "([^/]*)/?(.*)" )
+				if total [ totnexti ] and total [ totnexti ] == "" then total [ totnexti ] = nil else totnexti = totnexti + 1 end -- string match still fills in the total array
 			end
 			return { [ "tracknumber" ] = track , ["totaltracks"] = total }
 		end ,
 	["TPOS"] = function ( str ) -- Part of a set
-			local disc , total = { } , { }
+			local disc , total , totnexti = { } , { } , 1
 			for i , v in ipairs ( readtextframe ( str ) ) do
-				disc [ #disc + 1 ] , total [ #total + 1 ] = string.match ( v , "([^/]*)/?(.*)" )
-				if total [ #total ] == "" then total [ #total ] = nil end -- string match still fills in the total array
+				disc [ #disc + 1 ] , total [ totnexti ] = string.match ( v , "([^/]*)/?(.*)" )
+				if total [ totnexti ] and total [ totnexti ] == "" then total [ totnexti ] = nil else totnexti = totnexti + 1 end -- string match still fills in the total array
 			end
 			return { [ "discnumber" ] = disc , ["totaldiscs"] = total }
 		end ,
@@ -395,7 +448,7 @@ local framedecode = {
 		return { [ "composer" ] = readtextframe ( str ) }
 	end ,
 	["TMCL"] = function ( str ) -- Musician credits list
-		local t , field = {} , ""
+		local t , field = {}
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			if i % 2 == 1 then -- odd, field is instrument
 				field = v .. " player"
@@ -407,7 +460,7 @@ local framedecode = {
 		return t
 	end ,
 	["TIPL"] = function ( str ) -- Involved people list
-		local t , field = {} , ""
+		local t , field = {}
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			if i % 2 == 1 then -- odd, field is instrument
 				field = v
@@ -458,21 +511,23 @@ local framedecode = {
 	end ,
 	-- Rights and license frames
 	["TCOP"] = function ( str ) -- Copyright message
-		local c = { }
+		local c , nexti = { } , 1
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local m = string.match ( v , "(%d%d%d%d)%s" )
 			if m then 
-				c [ #c + 1 ] = m
+				c [ nexti ] = m
+				nexti = nexti + 1
 			end
 		end
 		return { [ "copyright" ] =  c }
 	end ,
 	["TPRO"] = function ( str ) -- Produced notice
-		local p = { }
+		local p , nexti = { } , 1
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local m = string.match ( v , "(%d%d%d%d)%s" )
 			if m then 
-				p [ #p + 1 ] = m
+				p [ nexti ] = m
+				nexti = nexti + 1
 			end
 		end
 		return { [ "produced" ] =p }
@@ -691,8 +746,8 @@ do -- ID3v2.3 frames (Older frames) -- See http://id3.org/id3v2.4.0-changes
 	framedecode["TDAT"] = function ( str ) -- Date in DDMM form
 		local t = { }
 		for i , v in ipairs ( readtextframe ( str ) ) do
-			local day = string.sub ( v , 1 , 2 )
-			local month = string.sub ( v , 3 , 4 )
+			local day = twodigit ( string.sub ( v , 1 , 2 ) )
+			local month = twodigit ( string.sub ( v , 3 , 4 ) )
 			t [ #t + 1 ] = month .. "-" .. day
 		end
 		return { [ "date" ] = t }
@@ -869,27 +924,6 @@ local function decodeframe ( frame , header , frameheader )
 	return frame
 end
 
-local function readframe ( fd , header )
-	local ok , err = readframeheader ( fd , header )
-	if ok then
-		fd:seek ( "set" , ok.startcontent )
-		local frame , err = decodeframe ( fd:read ( ok.size ) , header , ok )
-		if frame then
-			if framedecode [ ok.id ] then
-				--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
-				return ( framedecode [ ok.id ] ( frame ) or { } )
-			else -- We don't know of this frame type
-				updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
-				return { }
-			end
-		else
-			return frame , err
-		end
-	else
-		return ok , err
-	end
-end
-
 -- Trys to find an id3tag in given file handle
  -- Returns the start of the tag as a file offset
 function find ( fd )
@@ -920,9 +954,19 @@ function info ( fd , location , item )
 		end
 		local sd = vstruct.cursor ( id3tag )
 		while sd:seek ( "cur" ) < ( header.size - header.frameheadersize ) do
-			local ok , err = readframe ( sd , header )
+			local ok , err = readframeheader ( sd , header )
 			if ok then
-				table.inherit ( item.tags , ok , true )
+				sd:seek ( "set" , ok.startcontent )
+				local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
+				if frame then
+					if framedecode [ ok.id ] then
+						--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
+						f= framedecode [ ok.id ]
+						table.inherit ( item.tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
+					else -- We don't know of this frame type
+						updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
+					end
+				end
 			elseif err == "padding" then
 				break
 			else
@@ -937,38 +981,40 @@ end
 
 -- Make frames from tags
  -- Returns a table where each entry is a frame
-local function generateframes ( humanname , r , v , id3version )
+local function generateframe ( humanname , r , v , id3version )
 	local datadiscarded
-	if type ( r ) == "string" then
+	if type ( r ) == "string" and v and v [ 1 ] then
 		if string.sub ( r , 1 , 1 ) == "T"  and not ( r == "TXXX" or r == "TXX" ) then -- Standard defined Text field
-			local e = 1 -- Encoding, 1 is UTF-16
+			local e = v.encoding or 1 -- Encoding, 1 is UTF-16
 			local s = string.char ( e ) .. v [ 1 ]
 			for i =2 , #v do
 				s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
 			end
 			return { id = r , contents = s } , datadiscarded
 		elseif string.sub ( r , 1 , 1 ) == "W" and not ( r == "WXXX" or r == "WXX" ) then -- Standard defined Link field
-			return { id = r , contents = ascii ( v [ 1 ] , "UTF-16" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
+			return { id = r , contents = ascii ( v [ 1 ] , ( encodings [ v.encoding ] or "UTF-16" ) ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
 		else -- Assume binary data
 			for i , bin in ipairs ( v ) do
 				return { id = r , contents = bin } , datadiscarded
 			end
 		end
-	elseif not r and v then
+	elseif not r and v and v [ 1 ] then
 		if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( humanname , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
 			r = ( ( id3version == 2 ) and "WXX" ) or "WXXX"
-			local e = 1 -- Encoding, 1 is UTF-16
+			local e = v.encoding or 1 -- Encoding, 1 is UTF-16
 			humanname = humanname:match ( "(.*)url" ) or humanname
 			return { id = r , contents = string.char ( e ) .. utf16 ( humanname ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ( v [ 1 ] or "" ) } , ( v [ 2 ] or datadiscarded )
 		else	-- Put in a TXXX field
 			r = ( ( id3version == 2 ) and "TXX" ) or "TXXX"
-			local e = 1 -- Encoding, 1 is UTF-16
+			local e = v.encoding or 1 -- Encoding, 1 is UTF-16
 			local s = string.char ( e ) .. utf16 ( humanname ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ 1 ]
 			for i =2 , #v do
 				s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. v [ i ]
 			end
 			return { id = r , contents = s } , datadiscarded
 		end
+	else
+		-- empty frame, wtf >.<
 	end
 end
 
@@ -982,14 +1028,14 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 	local starttag = find ( fd )
 	local sizetofitinto = 0 -- Size available to fit into from value of starttag
 	
-	local existing = { }
+	local existing , doneids , nextidnum = { } , { } , 1
 	if starttag then -- File has existing tag
 		local t
 		if io.type ( fd ) then -- Get existing tag
 			fd:seek ( "set" , starttag )
 			local header , err = readheader ( fd )
 			if header then
-				t = { version = header.version }
+				t , nexti = { version = header.version } , 1
 				local id3tag = fd:read ( header.size )
 				if header.unsynched then
 					id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
@@ -999,17 +1045,13 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 				while sd:seek ( "cur" ) < ( header.size - header.frameheadersize  ) do
 					local ok , err = readframeheader ( sd , header )
 					if ok then
-						--[[if ok.tagalterpreserv then -- Preserve
-							--t [ #t + 1 ] = { ok , fd:read ( ok.size ) }
-						elseif
-						else
-							
-						end--]]
+						sd:seek ( "set" , ok.startcontent )
 						local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 						if err then -- If can't decode, skip over the frame
-							--return ferror ( err , 5 )
 						else
-							t [ #t + 1 ] = { id = ok.id , contents = frame , statusflags = ok.statusflags , formatflags = ok.formatflags }
+							t [ nexti ] = { id = ok.id , contents = frame , statusflags = ok.statusflags , formatflags = ok.formatflags }
+							doneids [ #nextidnum ] = ok.id
+							nexti = nexti + 1
 						end
 					elseif err == "padding" then
 						break
@@ -1024,7 +1066,9 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 		if t.version == id3version then
 			existing = t
 		else
+			--local tags = ( framedecode [ ok.id ] ( frame ) or { } )
 			--TODO convert tag versions
+			print("wrong id3v2 version")
 		end
 	else -- File has no tag
 		if footer then starttag = fd:seek ( "end" )
@@ -1032,38 +1076,66 @@ function generatetag ( tags , fd , id3version , footer , dontwrite )
 	end
 	
 	-- Generate tags for the new data
-	local frames = { }
+	local frames , nextf = { } , 1
 	for k , v in pairs ( tags ) do
 		-- Get frame 
-		local r = frameencode [ k ]
-		if type ( r ) == "function" then
-			local a , b
-			r , v , b = r ( tags , id3version )
-			datadiscarded = b or datadiscarded
-		elseif type ( r ) == "table" then
-			r = r [ id3version ]
+		local encoderule = frameencode [ k ]
+		local preframe
+		if type ( encoderule ) == "function" then
+			local lostdata
+			preframe , lostdata = encoderule ( tags , id3version )
+			datadiscarded = lostdata or datadiscarded
+		elseif type ( encoderule ) == "table" then
+			preframe = { { encoderule [ id3version ] , v } }
+		else -- No rule found
+			preframe = { { false , v } }
 		end
 		
-		
-		
-		-- k is name of tag (internall)
-		-- r should now be a string == frame that will come out
-		-- v is table of values to be packed into frame called k
-		
+		-- k is name of tag (lomp internall)
+		-- preframe[i][1] is id of resulting frame
+		-- preframe[i][2] is table of values to be packed into frame called k
 		
 		-- Generate frame contents
-		local frame , dd = generateframes ( k , r , v , id3version ) 
-		datadiscarded = datadiscarded or dd 
-		frames [ #frames + 1 ] = frame
+		for i , v in ipairs ( preframe ) do
+			local frame , lostdata = generateframe ( k , v[1] , v[2] , id3version ) 
+			datadiscarded = datadiscarded or lostdata
+			if frame and frame.id and frame.contents then
+				frames [ nextf ] = frame
+				--print("frame" , k )
+				-- Set flags
+				frames [ nextf ].formatflags = { false , false , false , false , false , false , false , false }
+				frames [ nextf ].statusflags = { false , false , false , false , false , false , false , false } -- Index three contains the frame flags, set all flags to false
+				
+				nextf = nextf + 1
+			end
+		end
+	end
+	-- Check for doubled up frames
+	
+	
+	-- Merge existing and new
+	local readyframes
+	do
+		local clashfunc = function ( t1 , t2 , k1 , k2 )
+			print ( "CLASH" , k2 , k1 , t1[k1].id )
+		end
 		
-		-- Set flags
-		frames [ #frames ].formatflags = { false , false , false , false , false , false , false , false }
-		frames [ #frames ].statusflags = { false , false , false , false , false , false , false , false } -- Index three contains the frame flags, set all flags to false
+		readyframes = existing or { }
+			
+		local knownids , nexti = { } , #readyframes + 1
+		for i, v in ipairs ( readyframes ) do
+			knownids [ v.id ] = i
+		end
+		for i, v in pairs ( frames ) do
+			if knownids[v.id] then
+				clashfunc ( readyframes , frames , knownids [ v.id ] , i )
+			else
+				readyframes [ nexti ] = v
+				nexti = nexti + 1
+			end
+		end
 	end
 	
-	-- Check for doubled up frames
-	local readyframes = frames
-		
 	-- Add frame headers
 	for i , v in ipairs ( readyframes ) do
 		local size = #v.contents
