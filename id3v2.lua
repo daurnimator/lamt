@@ -1008,7 +1008,7 @@ local function generateframe ( humanname , r , v , id3version )
 			end
 			return { id = r , contents = s } , datadiscarded
 		elseif string.sub ( r , 1 , 1 ) == "W" and not ( r == "WXXX" or r == "WXX" ) then -- Standard defined Link field
-			return { id = r , contents = ascii ( v [ 1 ] , ( encodings [ v.encoding ] or "UTF-8" ) ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
+			return { id = r , contents = ascii ( v [ 1 ] , "UTF-8" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
 		else -- Assume binary data
 			for i , bin in ipairs ( v ) do
 				return { id = r , contents = bin } , datadiscarded
@@ -1034,6 +1034,138 @@ local function generateframe ( humanname , r , v , id3version )
 	end
 end
 
+local clashfunc = function ( v1 , v2 , overwrite )
+	if overwrite == "overwrite" then
+		return { v2 } , false
+	else
+		local id = v1.id
+		
+		local cmp = {
+			enc_encstring = function ( str )
+				local encoding = string.byte ( str:sub ( 1 , 1 ) )
+				local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+				local s , e = str:find ( terminator , 2 , true )
+				local description = str:sub ( 2 , s - 1 )
+				return description
+			end ,
+			enc_lang_encdesc = function ( str ) -- Unique language and description
+				local encoding = string.byte ( str:sub ( 1 , 1 ) )
+				local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+				local language = str:sub ( 2 , 4 )
+				local s , e = str:find ( terminator , 5 , true )
+				local description = str:sub ( 5 , s - 1 )
+				return language..description
+			end ,
+			nullterm = function ( str ) -- Unique is first null terminated string
+				local s , e = str:find ( "\0" , 1 , true )
+				return str.sub ( 1 , s - 1 )
+			end ,
+			onebyte_nullterm = function ( str ) -- Unique is first null terminated string
+				local s , e = str:find ( "\0" , 2 , true )
+				return str.sub ( 2 , s - 1 )
+			end ,
+			enc_lang = function ( str )
+				return str:sub ( 2 , 4 )
+			end ,
+			anythingdifferent = function ( str )
+				return str
+			end ,
+		}
+		local idtocmp = {
+			["TXX"] = cmp.enc_encstring , 
+			["TXXX"] = cmp.enc_encstring , 
+			["WXX"] = cmp.enc_encstring , 
+			["WXXX"] = cmp.enc_encstring ,
+			["ULT"] = enc_lang_encdesc ,
+			["USLT"] = enc_lang_encdesc ,
+			["COM"] = enc_lang_encdesc ,
+			["COMM"] = enc_lang_encdesc ,
+			["UFI"] = nullterm ,
+			["UFID"] = nullterm ,
+			["WCM"] = nullterm ,
+			["WCOM"] = nullterm ,
+			["WCM"] = nullterm ,
+			["WOAR"] = nullterm ,
+			["WAR"] = nullterm ,
+			["RVA"] = nullterm ,
+			["RVAD"] = nullterm ,
+			["RVA2"] = nullterm ,
+			["POP"] = nullterm ,
+			["POPM"] = nullterm ,
+			["AENC"] = nullterm ,
+			["EQU2"] = onebyte_nullterm ,
+			["USER"] = enc_lang ,
+			["PRIV"] = anythingdifferent ,
+			["COMR"] =anythingdifferent ,
+			["SIGN"] =anythingdifferent ,
+		}
+		local comparefunc = idtocmp [ id ] or function ( ) return true end
+		if comparefunc ( v1.contents ) == comparefunc ( v2.contents ) then
+			-- Have a clash
+			if overwrite == false then
+				return { v1 } , false
+			else
+				return { v2 } , true
+			end
+		else
+			return { v1 , v2 } , false				
+		end
+	end
+end
+
+-- Generate frames for the new data
+local function generateframes ( tags , id3version , overwrite )
+	local frames , datadiscarded = { } , false
+	for k , v in pairs ( tags ) do
+		-- Get frame 
+		local encoderule = frameencode [ k ]
+		local preframe
+		if type ( encoderule ) == "function" then
+			local lostdata
+			preframe , lostdata = encoderule ( tags , id3version )
+			datadiscarded = lostdata or datadiscarded
+		elseif type ( encoderule ) == "table" then
+			preframe = { { encoderule [ id3version ] , v } }
+		else -- No rule found
+			preframe = { { false , v } }
+		end
+		
+		-- k is name of tag (lomp internall)
+		-- preframe[i][1] is id of resulting frame
+		-- preframe[i][2] is table of values to be packed into frame called k
+		
+		-- Generate frame contents
+		for i , v in ipairs ( preframe ) do
+			local frame , lostdata = generateframe ( k , v[1] , v[2] , id3version ) 
+			datadiscarded = datadiscarded or lostdata
+			if frame and frame.id and frame.contents then
+				-- Check for doubled up frames
+				local clash , i , j = false , 1 , #frames
+				while i < j do
+					if frame.id == frames [ i ].id then
+						local rep , lostdata = clashfunc ( v , w , overwrite )
+						for i , v in ipairs ( rep ) do
+							frames [ #frames + 1 ] = frame
+						end
+						datadiscarded = lostdata or datadiscarded
+						clash = true
+					end					
+					i = i + 1
+				end
+				if not clash then
+					frames [ #frames + 1 ] = frame
+				end
+			end
+		end
+		for i , v in ipairs ( frames ) do
+			-- Set flags
+			v.formatflags = { false , false , false , false , false , false , false , false }
+			v.statusflags = { false , false , false , false , false , false , false , false } -- Index three contains the frame flags, set all flags to false
+		end
+	end
+	return frames , datadiscarded
+end
+
 -- tags = {"k"={"v1","v2"}	=> table of new tags to write
 -- fd 						=> file descriptor of file to modify
 -- overwrite    	= false		=> don't change anything thats already set, only fill in missing values
@@ -1043,7 +1175,7 @@ end
 -- id3version 	= 2-4 		=> id3 version to write
 -- footer 		= boolean 	=> write footer instead of header - id3version must be 4
 -- dontwrite 	= boolean 	=> just generate tag
-function generatetag ( tags , path , overwrite , id3version , footer , dontwrite )
+function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 	local fd , err = io.open ( path , "rb+" )
 	if not fd then return ferror ( err , 3 ) end
 	
@@ -1090,148 +1222,27 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 				sizetofitinto = 10 + header.size
 			end
 		end
-		-- Convert to correct id3v2 version
-		if t.version == id3version then
+		
+		if t.version == id3version then -- Tag already correct version
 			existing = t
-		else
-			--local tags = ( framedecode [ ok.id ] ( frame ) or { } )
-			--TODO convert tag versions
-			io.stderr:write("wrong id3v2 version","File:" , t.version , "Writing:" , id3version )
+		else -- Convert tag to other version
+			io.stderr:write("wrong id3v2 version \t File:\t" , t.version , "\tWriting:\t" , id3version ,"\n")
+			local tags = { }
+			for i , v in ipairs ( t ) do 
+				table.inherit ( tags , ( framedecode [ v.id ] ( v.contents ) or { } ) , true )
+			end
+			local dd
+			existing , dd = generateframes ( tags , id3version , overwrite )
+			datadiscarded = dd or datadiscarded
 		end
 	else -- File has no tag
 		if footer then starttag = fd:seek ( "end" )
 		else starttag = 0 end
 	end
-
-	local clashfunc = function ( v1 , v2 )
-		if overwrite == "overwrite" then
-			return { v2 } , false
-		else
-			local id = v1.id
-			
-			local cmp = {
-				enc_encstring = function ( str )
-					local encoding = string.byte ( str:sub ( 1 , 1 ) )
-					local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
-					local s , e = str:find ( terminator , 2 , true )
-					local description = str:sub ( 2 , s - 1 )
-					return description
-				end ,
-				enc_lang_encdesc = function ( str ) -- Unique language and description
-					local encoding = string.byte ( str:sub ( 1 , 1 ) )
-					local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
-					local language = str:sub ( 2 , 4 )
-					local s , e = str:find ( terminator , 5 , true )
-					local description = str:sub ( 5 , s - 1 )
-					return language..description
-				end ,
-				nullterm = function ( str ) -- Unique is first null terminated string
-					local s , e = str:find ( "\0" , 1 , true )
-					return str.sub ( 1 , s - 1 )
-				end ,
-				onebyte_nullterm = function ( str ) -- Unique is first null terminated string
-					local s , e = str:find ( "\0" , 2 , true )
-					return str.sub ( 2 , s - 1 )
-				end ,
-				enc_lang = function ( str )
-					return str:sub ( 2 , 4 )
-				end ,
-				anythingdifferent = function ( str )
-					return str
-				end ,
-			}
-			local idtocmp = {
-				["TXX"] = cmp.enc_encstring , 
-				["TXXX"] = cmp.enc_encstring , 
-				["WXX"] = cmp.enc_encstring , 
-				["WXXX"] = cmp.enc_encstring ,
-				["ULT"] = enc_lang_encdesc ,
-				["USLT"] = enc_lang_encdesc ,
-				["COM"] = enc_lang_encdesc ,
-				["COMM"] = enc_lang_encdesc ,
-				["UFI"] = nullterm ,
-				["UFID"] = nullterm ,
-				["WCM"] = nullterm ,
-				["WCOM"] = nullterm ,
-				["WCM"] = nullterm ,
-				["WOAR"] = nullterm ,
-				["WAR"] = nullterm ,
-				["RVA"] = nullterm ,
-				["RVAD"] = nullterm ,
-				["RVA2"] = nullterm ,
-				["POP"] = nullterm ,
-				["POPM"] = nullterm ,
-				["AENC"] = nullterm ,
-				["EQU2"] = onebyte_nullterm ,
-				["USER"] = enc_lang ,
-				["PRIV"] = anythingdifferent ,
-				["COMR"] =anythingdifferent ,
-				["SIGN"] =anythingdifferent ,
-			}
-			local comparefunc = idtocmp [ id ] or function ( ) return true end
-
-			if comparefunc ( v1.contents ) == comparefunc ( v2.contents ) then
-				-- Have a clash
-				if overwrite == false then
-					return { v1 } , false
-				else
-					return { v2 } , true
-				end
-			else
-				return { v1 , v2 } , false				
-			end
-		end
-	end
 	
-	-- Generate tags for the new data
-	local frames = { }
-	for k , v in pairs ( tags ) do
-		-- Get frame 
-		local encoderule = frameencode [ k ]
-		local preframe
-		if type ( encoderule ) == "function" then
-			local lostdata
-			preframe , lostdata = encoderule ( tags , id3version )
-			datadiscarded = lostdata or datadiscarded
-		elseif type ( encoderule ) == "table" then
-			preframe = { { encoderule [ id3version ] , v } }
-		else -- No rule found
-			preframe = { { false , v } }
-		end
-		
-		-- k is name of tag (lomp internall)
-		-- preframe[i][1] is id of resulting frame
-		-- preframe[i][2] is table of values to be packed into frame called k
-		
-		-- Generate frame contents
-		for i , v in ipairs ( preframe ) do
-			local frame , lostdata = generateframe ( k , v[1] , v[2] , id3version ) 
-			datadiscarded = datadiscarded or lostdata
-			if frame and frame.id and frame.contents then
-				-- Check for doubled up frames
-				local clash , i , j = false , 1 , #frames
-				while i < j do
-					if frame.id == frames [ i ].id then
-						local rep , lostdata = clashfunc ( v , w )
-						for i , v in ipairs ( rep ) do
-							frames [ #frames + 1 ] = frame
-						end
-						datadiscarded = lostdata or datadiscarded
-						clash = true
-					end					
-					i = i + 1
-				end
-				if not clash then
-					frames [ #frames + 1 ] = frame
-				end
-			end
-		end
-		for i , v in ipairs ( frames ) do
-			-- Set flags
-			v.formatflags = { false , false , false , false , false , false , false , false }
-			v.statusflags = { false , false , false , false , false , false , false , false } -- Index three contains the frame flags, set all flags to false
-		end
-	end
+	local dd
+	frames , dd = generateframes ( tags , id3version , overwrite )
+	datadiscarded = dd or datadiscarded
 	
 	-- Merge existing and new
 	local readyframes = { }
@@ -1267,13 +1278,12 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 		else
 			readyframes [ i ] = vstruct.pack ( "> s m4 m1 m1 s" , { v.id , tblsize , v.statusflags , v.formatflags , v.contents } )
 		end
-		
 	end
 	
 	-- Put frames together
 	local allframes = table.concat ( readyframes ) 
 
-	-- compress,encrypt,unsync?
+	-- TODO: compress,encrypt,unsync?
 	
 	-- Generate header
 	local flags = { false , false , false , false , false , false , false , false }
@@ -1294,21 +1304,56 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 	io.stderr:write("Write starts at\t" .. starttag .. "\tHave this much room:\t" .. sizetofitinto .. "\tNeed this much room:\t" .. sizeheader + #allframes .. "\tPadding this much:\t" .. amountofpadding .. "\tTag + padding=\t" .. #tag .. "\n" )
 	if not dontwrite then
 		if sizetofitinto == #tag then -- We fit exactly in, hooray!
-			io.stderr:write("Tag fits!\n")
+			--io.stderr:write("Tag fits!\n")
 			fd:write ( tag )
+			fd:flush ( )
+			fd:close ( )
 		elseif footer then -- Is a footer, we don't care about it's length.
-			io.stderr:write("Tag should be appended, position\t" .. starttag .. "\n")
+			--io.stderr:write("Tag should be appended, position\t" .. starttag .. "\n")
 			fd:write ( tag )
+			fd:flush ( )
+			fd:close ( )
 		elseif sizetofitinto < #tag then -- We don't fit, will have to rewrite file
-			io.stderr:write("Damn, not enough room, rewriting tag\n")
-		
+			--io.stderr:write("Damn, not enough room, rewriting tag\n")
+			
+			local dir = string.match ( path , "(.*/)" ) or  "./"
+			local filename = string.match ( path , "([^/]+)$" )
+			
+			-- Make a tmpfile
+			local tmpfilename , wd , err
+			for lim = 1 ,  20 do 
+				tmpfilename = dir .. filename .. ".tmp" .. lim
+				local td
+				td , err = io.open ( tmpfilename , "r" )
+				if not td and err:find ( "No such file or directory" ) then -- Found an empty file
+					wd , err = io.open ( tmpfilename , "wb" )
+					break
+				end
+			end
+			if err then return print( "Could not create temporary file: " .. err , 3 ) end
+				
+			-- Write new tag to tmp file
+			wd:write ( tag )
+			
+			fd:seek ( "cur" , sizetofitinto )
+			
+			local bytescopied = 0
+			while true do
+				local buff = fd:read ( 1024 )
+				if not buff then break end
+				wd:write ( buff )
+				bytescopied = bytescopied + #buff
+			end
+			fd:close ( )
+			
+			wd:flush ( )
+			wd:close ( )
+			os.remove ( path ) 
+			os.rename ( tmpfilename , path )
+			os.remove ( tmpfilename ) 
 		end
 	end
-	fd:flush ( )
 	
 	return tag , datadiscarded
-end--]]
-
-function edit ( )
-
 end
+
