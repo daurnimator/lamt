@@ -53,7 +53,7 @@ local encodings = {
 	[ 3 ] = { name = "UTF-8" , nulls = "1" } , 
 }
 
-function readheader ( fd )
+local function readheader ( fd )
 	local t = vstruct.unpack ( "> ident:s3 version:u1 revision:u1 flags:m1 safesyncsize:m4" , fd )
 	if ( t.ident == "ID3" or t.ident == "3DI" ) then
 		t.size = desafesync ( t.safesyncsize )
@@ -150,16 +150,25 @@ end
 
 -- An index for how to convert internal tags to their id3v2 frame ids. returns a table where the index is the corresponding frame's id for the indexed id3 version
 local frameencode = {
-	[ "uniquefileid" ] = { false , "UFI" , "UFID" , "UFID" } ,
+	[ "unique file id" ] = function ( tags , id3version )
+		local id = { false , "UFI" , "UFID" , "UFID" }
+		local t = { }
+		for i , v in ipairs ( tags [ "unique file id" ] or { } ) do
+			local ownerid = ( tags [ "owner id" ] or { } ) [ i ] or "http://www.id3.org/dummy/ufid.html"
+			t [ i ] = ascii ( ownerid , "UTF-8" ) .. "\0" .. v
+		end
+		return { { id [ id3version ] , t } } , false
+	end ,
+	[ "owner id" ] = function () return { } , false end ,
 	[ "content group" ] = { false , "TT1" , "TIT1" , "TIT1" } ,
 	[ "title" ] = { false , "TT2" , "TIT2" , "TIT2" } ,
 	[ "subtitle" ] = { false , "TT3" , "TIT3" , "TIT3" } ,
 	[ "album" ] = { false , "TAL" , "TALB" , "TALB" } ,
 	[ "original album" ] = { false , "TOT" , "TOAL" , "TOAL" } ,
 	[ "tracknumber" ] = function ( tags , id3version )
-		local t , nexti = { } , 1
+		local t = { }
 		for i , v in ipairs ( tags [ "tracknumber" ] or { } ) do
-			if tags [ "totaltracks" ] [ i ] then
+			if tags [ "totaltracks" ] and tags [ "totaltracks" ] [ i ] then
 				t [ i ] = tostring ( v ) .. "/" .. tags [ "totaltracks" ] [i]
 			else
 				t [ i ] = tostring ( v )
@@ -180,7 +189,7 @@ local frameencode = {
 	[ "discnumber" ] = function ( tags , id3version )
 		local t = { }
 		for i , v in ipairs ( tags [ "discnumber" ] or { } ) do
-			if tags [ "totaldiscs" ] [ i ] then
+			if tags [ "totaldiscs" ] and tags [ "totaldiscs" ] [ i ] then
 				t [ i ] = tostring ( v ) .. "/" .. tags [ "totaldiscs" ] [i]
 			else
 				t [ i ] = tostring ( v )
@@ -337,7 +346,7 @@ local frameencode = {
 		local language = "eng" -- 3 character language
 		local s = string.char ( e ) .. language .. utf16 ( tags [ "terms of use" ] [ 1 ] , "UTF-8")
 		
-		local id = { false , "TXXX" , "USER" , "USER" }
+		local id = { false , "TXX" , "USER" , "USER" }
 		return { id [ id3version ] , { s } } , toboolean ( v [ 2 ] )
 	end ,
 	
@@ -372,7 +381,8 @@ end
 
 local framedecode = {
 	["UFID"] = function ( str )
-			return vstruct.unpack ( "> ownerid:{ z } uniquefileid:{ s64 }" , str )
+			local t = vstruct.unpack ( "> ownerid:z uniquefileid:s64" , str )
+			return { [ "owner id" ] = { utf8 ( t.ownerid , "ISO-8859-1" ) } , { [ "unique file id" ] = t.uniquefileid  } }
 		end ,
 		
 	-- TEXT fields
@@ -398,6 +408,7 @@ local framedecode = {
 				track [ #track + 1 ] , total [ totnexti ] = string.match ( v , "([^/]*)/?(.*)" )
 				if total [ totnexti ] and total [ totnexti ] == "" then total [ totnexti ] = nil else totnexti = totnexti + 1 end -- string match still fills in the total array
 			end
+			if not next ( total ) then total = nil end
 			return { [ "tracknumber" ] = track , ["totaltracks"] = total }
 		end ,
 	["TPOS"] = function ( str ) -- Part of a set
@@ -406,6 +417,7 @@ local framedecode = {
 				disc [ #disc + 1 ] , total [ totnexti ] = string.match ( v , "([^/]*)/?(.*)" )
 				if total [ totnexti ] and total [ totnexti ] == "" then total [ totnexti ] = nil else totnexti = totnexti + 1 end -- string match still fills in the total array
 			end
+			if not next ( total ) then total = nil end
 			return { [ "discnumber" ] = disc , ["totaldiscs"] = total }
 		end ,
 	["TSST"] = function ( str ) -- Set subtitle
@@ -578,10 +590,10 @@ local framedecode = {
 	end ,
 	-- Special case, TXXX
 	["TXXX"] = function ( str ) -- Custom text frame
-		local encoding = string.byte ( frame:sub ( 1 , 1 ) )
+		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = str:sub ( 2 , s - 1 ):lower ( )
+		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
 		local st = string.explode ( text , terminator , true )
@@ -624,10 +636,10 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = str:sub ( 2 , s - 1 )
+		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name )
 		local url = str:sub ( e + 1 )
 		
-		if #field == 0 or not string.find ( t.field , "%w" )  then 
+		if #field == 0 or not string.find ( field , "%w" )  then 
 			field = "url"
 		else 
 			field = string.lower ( field )
@@ -659,7 +671,7 @@ local framedecode = {
 		local terminator = string.rep ( "\0" , encodings [ t.encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
-		local description = str:sub ( 5 , s - 1 )
+		local description = str:sub ( 5 , e )
 		local text = str:sub ( e + 1 )
 
 		-- TODO: Can we do anything with language or description?
@@ -675,7 +687,7 @@ local framedecode = {
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
-		local description = str:sub ( 5 , s - 1 )
+		local description = str:sub ( 5 , e )
 		local text = str:sub ( e + 1 )
 		text = utf8 ( text , encodings [ encoding ].name )
 		-- TODO: Can we do anything with language or description?
@@ -721,7 +733,7 @@ local framedecode = {
 		local terminator = string.rep ( "\0" , encodings [ t.encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
-		local description = str:sub ( 5 , s - 1 )
+		local description = str:sub ( 5 , e )
 		local text = str:sub ( e + 1 )
 		
 		-- TODO: Can we do anything with language or description?
@@ -995,20 +1007,42 @@ function info ( fd , location , item )
 	end
 end
 
+local function genWXXXframe ( humanname , v , id3version )
+	local e = v.encoding or 1 -- Encoding, 1 is UTF-16
+	humanname = humanname:match ( "(.*)url" ) or humanname
+	local s = string.char ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ascii ( v [ 1 ] or "" , "UTF-8" )
+	return { id = ( ( id3version == 2 ) and "WXX" ) or "WXXX" , contents = s } , ( toboolean ( v [ 2 ] ) )
+end
+local function genTXXXframe ( humanname , v , id3version )
+	local e = v.encoding or 1 -- Encoding, 1 is UTF-16
+	local s = string.char ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ 1 ] , "UTF-8" )
+	for i =2 , #v do
+		s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+	end
+	return { id = ( ( id3version == 2 ) and "TXX" ) or "TXXX" , contents = s }
+end
 -- Make frames from tags
  -- Returns a table where each entry is a frame
-local function generateframe ( humanname , r , v , id3version )
+ local function generateframe ( humanname , r , v , id3version )
 	local datadiscarded
 	if type ( r ) == "string" and v and v [ 1 ] then
-		if string.sub ( r , 1 , 1 ) == "T"  and not ( r == "TXXX" or r == "TXX" ) then -- Standard defined Text field
-			local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-			local s = string.char ( e ) .. utf16 ( v [ 1 ] , "UTF-8" )
-			for i =2 , #v do
-				s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+		if string.sub ( r , 1 , 1 ) == "T" then
+			if r == "TXXX" or r == "TXX" then -- Standard defined Text field
+				return genTXXXframe ( humanname , v , id3version )
+			else
+				local e = v.encoding or 1 -- Encoding, 1 is UTF-16
+				local s = string.char ( e ) .. utf16 ( v [ 1 ] , "UTF-8" )
+				for i =2 , #v do
+					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+				end
+				return { id = r , contents = s } , datadiscarded
 			end
-			return { id = r , contents = s } , datadiscarded
-		elseif string.sub ( r , 1 , 1 ) == "W" and not ( r == "WXXX" or r == "WXX" ) then -- Standard defined Link field
-			return { id = r , contents = ascii ( v [ 1 ] , "UTF-8" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
+		elseif string.sub ( r , 1 , 1 ) == "W" then
+			if r == "WXXX" or r == "WXX" then -- Standard defined Link field
+				genWXXXframe ( humanname , v , id3version )
+			else
+				return { id = r , contents = ascii ( v [ 1 ] , "UTF-8" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
+			end
 		else -- Assume binary data
 			for i , bin in ipairs ( v ) do
 				return { id = r , contents = bin } , datadiscarded
@@ -1016,101 +1050,105 @@ local function generateframe ( humanname , r , v , id3version )
 		end
 	elseif not r and v and v [ 1 ] then
 		if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( humanname , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
-			r = ( ( id3version == 2 ) and "WXX" ) or "WXXX"
-			local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-			humanname = humanname:match ( "(.*)url" ) or humanname
-			return { id = r , contents = string.char ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ascii ( v [ 1 ] or "" , "UTF-8" ) } , ( v [ 2 ] or datadiscarded )
+			return genWXXXframe ( humanname , v , id3version )
 		else	-- Put in a TXXX field
-			r = ( ( id3version == 2 ) and "TXX" ) or "TXXX"
-			local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-			local s = string.char ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ 1 ] , "UTF-8" )
-			for i =2 , #v do
-				s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
-			end
-			return { id = r , contents = s } , datadiscarded
+			return genTXXXframe ( humanname , v , id3version )
 		end
 	else
 		-- empty frame, wtf >.<
+		return
 	end
 end
 
-local clashfunc = function ( v1 , v2 , overwrite )
-	if overwrite == "overwrite" then
-		return { v2 } , false
-	else
-		local id = v1.id
-		
-		local cmp = {
-			enc_encstring = function ( str )
-				local encoding = string.byte ( str:sub ( 1 , 1 ) )
-				local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
-				local s , e = str:find ( terminator , 2 , true )
-				local description = str:sub ( 2 , s - 1 )
-				return description
-			end ,
-			enc_lang_encdesc = function ( str ) -- Unique language and description
-				local encoding = string.byte ( str:sub ( 1 , 1 ) )
-				local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
-				local language = str:sub ( 2 , 4 )
-				local s , e = str:find ( terminator , 5 , true )
-				local description = str:sub ( 5 , s - 1 )
-				return language..description
-			end ,
-			nullterm = function ( str ) -- Unique is first null terminated string
-				local s , e = str:find ( "\0" , 1 , true )
-				return str.sub ( 1 , s - 1 )
-			end ,
-			onebyte_nullterm = function ( str ) -- Unique is first null terminated string
-				local s , e = str:find ( "\0" , 2 , true )
-				return str.sub ( 2 , s - 1 )
-			end ,
-			enc_lang = function ( str )
-				return str:sub ( 2 , 4 )
-			end ,
-			anythingdifferent = function ( str )
-				return str
-			end ,
-		}
-		local idtocmp = {
-			["TXX"] = cmp.enc_encstring , 
-			["TXXX"] = cmp.enc_encstring , 
-			["WXX"] = cmp.enc_encstring , 
-			["WXXX"] = cmp.enc_encstring ,
-			["ULT"] = enc_lang_encdesc ,
-			["USLT"] = enc_lang_encdesc ,
-			["COM"] = enc_lang_encdesc ,
-			["COMM"] = enc_lang_encdesc ,
-			["UFI"] = nullterm ,
-			["UFID"] = nullterm ,
-			["WCM"] = nullterm ,
-			["WCOM"] = nullterm ,
-			["WCM"] = nullterm ,
-			["WOAR"] = nullterm ,
-			["WAR"] = nullterm ,
-			["RVA"] = nullterm ,
-			["RVAD"] = nullterm ,
-			["RVA2"] = nullterm ,
-			["POP"] = nullterm ,
-			["POPM"] = nullterm ,
-			["AENC"] = nullterm ,
-			["EQU2"] = onebyte_nullterm ,
-			["USER"] = enc_lang ,
-			["PRIV"] = anythingdifferent ,
-			["COMR"] =anythingdifferent ,
-			["SIGN"] =anythingdifferent ,
-		}
-		local comparefunc = idtocmp [ id ] or function ( ) return true end
-		if comparefunc ( v1.contents ) == comparefunc ( v2.contents ) then
-			-- Have a clash
-			if overwrite == false then
-				return { v1 } , false
-			else
-				return { v2 } , true
-			end
-		else
-			return { v1 , v2 } , false				
-		end
+-- Trys to add newvalue to table
+local function clashfunc ( tbl , newvalue , overwrite , tblnodupes )
+	local lostdata
+	if not tblnodupes and tbl [ 2 ] then
+		tbl , lostdata = clashfunc ( { unpack ( tbl , 2 ) } , tbl [ 1] , overwrite , false )
 	end
+	
+	local result , nexti = { } , 1
+	
+	local uniquefuncs = {
+		enc_encstring = function ( str )
+			local encoding = string.byte ( str:sub ( 1 , 1 ) )
+			local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+			local s , e = str:find ( terminator , 2 , true )
+			local description = ascii ( str:sub ( 2 , e )  , encodings [ encoding ].name ):lower ( )
+			return description
+		end ,
+		enc_lang_encdesc = function ( str ) -- Unique language and description
+			local encoding = string.byte ( str:sub ( 1 , 1 ) )
+			local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+			local language = str:sub ( 2 , 4 )
+			local s , e = str:find ( terminator , 5 , true )
+			local description = str:sub ( 5 , e )
+			return language..description
+		end ,
+		nullterm = function ( str ) -- Unique is first null terminated string
+			local s , e = str:find ( "\0" , 1 , true )
+			return str:sub ( 1 , s - 1 )
+		end ,
+		onebyte_nullterm = function ( str ) -- Unique is first null terminated string
+			local s , e = str:find ( "\0" , 2 , true )
+			return str:sub ( 2 , s - 1 )
+		end ,
+		enc_lang = function ( str )
+			return str:sub ( 2 , 4 )
+		end ,
+		anythingdifferent = function ( str )
+			return str
+		end ,
+	}
+	local idtouniquefunc = {
+		["TXX"] = uniquefuncs.enc_encstring , 
+		["TXXX"] = uniquefuncs.enc_encstring , 
+		["WXX"] = uniquefuncs.enc_encstring , 
+		["WXXX"] = uniquefuncs.enc_encstring ,
+		["ULT"] = uniquefuncs.enc_lang_encdesc ,
+		["USLT"] = uniquefuncs.enc_lang_encdesc ,
+		["COM"] = uniquefuncs.enc_lang_encdesc ,
+		["COMM"] = uniquefuncs.enc_lang_encdesc ,
+		["UFI"] = uniquefuncs.nullterm ,
+		["UFID"] = uniquefuncs.nullterm ,
+		["WCM"] = uniquefuncs.nullterm ,
+		["WCOM"] = uniquefuncs.nullterm ,
+		["WCM"] = uniquefuncs.nullterm ,
+		["WOAR"] = uniquefuncs.nullterm ,
+		["WAR"] = uniquefuncs.nullterm ,
+		["RVA"] = uniquefuncs.nullterm ,
+		["RVAD"] = uniquefuncs.nullterm ,
+		["RVA2"] = uniquefuncs.nullterm ,
+		["POP"] = uniquefuncs.nullterm ,
+		["POPM"] = uniquefuncs.nullterm ,
+		["AENC"] = uniquefuncs.nullterm ,
+		["EQU2"] = uniquefuncs.onebyte_nullterm ,
+		["USER"] = uniquefuncs.enc_lang ,
+		["PRIV"] = uniquefuncs.anythingdifferent ,
+		["COMR"] = uniquefuncs.anythingdifferent ,
+		["SIGN"] = uniquefuncs.anythingdifferent ,
+	}
+		
+	local id = newvalue.id
+	local unique = function ( v ) 
+		local func = idtouniquefunc [ id ]
+		if func then return func ( v.contents )
+		else	return true end
+	end
+	
+	for i , v in ipairs ( tbl ) do
+		if not ( unique ( v ) == unique ( newvalue ) ) then
+			-- No clash
+			result [ nexti ] = v
+			nexti = nexti + 1
+  		end
+	end
+	if #result < #tbl then
+		lostdata = true
+	end
+	result [ nexti ] = newvalue
+	
+	return result , lostdata
 end
 
 -- Generate frames for the new data
@@ -1139,22 +1177,7 @@ local function generateframes ( tags , id3version , overwrite )
 			local frame , lostdata = generateframe ( k , v[1] , v[2] , id3version ) 
 			datadiscarded = datadiscarded or lostdata
 			if frame and frame.id and frame.contents then
-				-- Check for doubled up frames
-				local clash , i , j = false , 1 , #frames
-				while i < j do
-					if frame.id == frames [ i ].id then
-						local rep , lostdata = clashfunc ( v , w , overwrite )
-						for i , v in ipairs ( rep ) do
-							frames [ #frames + 1 ] = frame
-						end
-						datadiscarded = lostdata or datadiscarded
-						clash = true
-					end					
-					i = i + 1
-				end
-				if not clash then
-					frames [ #frames + 1 ] = frame
-				end
+				frames [ #frames + 1 ] = frame
 			end
 		end
 		for i , v in ipairs ( frames ) do
@@ -1166,16 +1189,17 @@ local function generateframes ( tags , id3version , overwrite )
 	return frames , datadiscarded
 end
 
--- tags = {"k"={"v1","v2"}	=> table of new tags to write
--- fd 						=> file descriptor of file to modify
--- overwrite    	= false		=> don't change anything thats already set, only fill in missing values
---			nil, non-string	=> read existing tags, attempt to merge, if only one value can be accepted, use one given
---			= "overwrite"	=> overwrite existing tags of comparable fields
---			= "new"		=> generate completely new tag
--- id3version 	= 2-4 		=> id3 version to write
--- footer 		= boolean 	=> write footer instead of header - id3version must be 4
--- dontwrite 	= boolean 	=> just generate tag
-function edit ( tags , path , overwrite , id3version , footer , dontwrite )
+-- Generate the id3v2 tag
+ -- 	tags = {"k"={"v1","v2"}	=> table of new tags to write
+ -- fd 						=> file descriptor of file to modify
+ -- overwrite    	= false		=> don't change anything thats already set, only fill in missing values
+ --			nil, non-string	=> read existing tags, attempt to merge, if only one value can be accepted, use one given
+ --			= "overwrite"	=> overwrite existing tags of comparable fields
+ --			= "new"		=> generate completely new tag
+ -- id3version 	= 2-4 		=> id3 version to write
+ -- footer 		= boolean 	=> write footer instead of header - id3version must be 4
+ -- dontwrite 	= boolean 	=> just generate tag
+function generatetag ( tags , path , overwrite , id3version , footer , dontwrite )
 	local fd , err = io.open ( path , "rb+" )
 	if not fd then return ferror ( err , 3 ) end
 	
@@ -1189,7 +1213,7 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 	local starttag = find ( fd )
 	local sizetofitinto = 0 -- Size available to fit into from value of starttag
 	
-	local existing , nextidnum = { } , 1
+	local knownids , nextidnum = { } , 1
 	if overwrite ~= "new" and starttag then -- File has existing tag
 		local t
 		if io.type ( fd ) then -- Get existing tag
@@ -1224,59 +1248,84 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 		end
 		
 		if t.version == id3version then -- Tag already correct version
-			existing = t
+			for i , v in ipairs ( t ) do
+				if not knownids [ v.id ] then
+					knownids [ v.id ] = { v }
+				else
+					knownids [ v.id ] [ #( knownids [ v.id ] ) + 1 ] = v
+				end
+			end
+		
 		else -- Convert tag to other version
 			io.stderr:write("wrong id3v2 version \t File:\t" , t.version , "\tWriting:\t" , id3version ,"\n")
 			local tags = { }
 			for i , v in ipairs ( t ) do 
-				table.inherit ( tags , ( framedecode [ v.id ] ( v.contents ) or { } ) , true )
+				if framedecode [ v.id ] then
+					table.inherit ( tags , ( framedecode [ v.id ] ( v.contents ) or { } ) , true )
+				end
 			end
-			local dd
-			existing , dd = generateframes ( tags , id3version , overwrite )
+			local existing , dd = generateframes ( tags , id3version , overwrite )
 			datadiscarded = dd or datadiscarded
+			
+			for i , v in ipairs ( existing ) do
+				if not knownids [ v.id ] then
+					knownids [ v.id ] = { v }
+				else
+					knownids [ v.id ] = clashfunc ( knownids [ v.id ] , v , overwrite )
+				end
+			end
 		end
 	else -- File has no tag
 		if footer then starttag = fd:seek ( "end" )
 		else starttag = 0 end
 	end
 	
-	local dd
-	frames , dd = generateframes ( tags , id3version , overwrite )
+	local frames , dd = generateframes ( tags , id3version , overwrite )
 	datadiscarded = dd or datadiscarded
 	
-	-- Merge existing and new
-	local readyframes = { }
-	if overwrite ~= "new" then		
-		for i , v in ipairs ( existing ) do
-			local clash = false
-			for j , w in ipairs ( frames ) do
-				if v.id == w.id then
-					local rep , lostdata = clashfunc ( v , w )
-					for i , v in ipairs ( rep ) do
-						readyframes [ #readyframes + 1 ] = v
+	-- Merge in new frames
+	for i , v in ipairs ( frames ) do
+		if not knownids [ v.id ] then
+			knownids [ v.id ] = { v }
+		else
+			if overwrite == "overwrite" then
+				local tmp, lostdata = clashfunc ( { select ( 2 , unpack ( knownids [ v.id ] ) ) } , knownids [ v.id ] [ 1] , overwrite , false )
+				datadiscarded = lostdata or datadiscarded
+				if #tmp == #knownids [ v.id ] then
+					local tmp2 , lostdata = clashfunc ( tmp , v , overwrite , true )
+					if lostdata then
+						knownids [ v.id ] = tmp
+					else
+						knownids [ v.id ] = tmp2
+						datadiscarded = lostdata or datadiscarded
 					end
-					datadiscarded = lostdata or datadiscarded
-					clash = true
+				else
+					knownids [ v.id ] = tmp
 				end
-			end
-			if not clash then 
-				readyframes [ #readyframes + 1 ] = v
+			else
+				local lostdata
+				knownids [ v.id ] , lostdata = clashfunc ( knownids [ v.id ] , v , overwrite , false )
+				datadiscarded = lostdata or datadiscarded
 			end
 		end
 	end
 	
-	-- Add frame headers
-	for i , v in ipairs ( readyframes ) do
-		local size = #v.contents
-		if size >= 268435456 then return ferror ( "Tag too large" , 3 ) end
-		local tblsize
-		if id3version == 4 then tblsize = makesafesync ( size ) 
-		else tblsize = vstruct.explode ( size ) end
-		
-		if id3version == 2 then
-			readyframes [ i ] = vstruct.pack ( "> s m3 s" , { v.id  , tblsize , v.contents } )
-		else
-			readyframes [ i ] = vstruct.pack ( "> s m4 m1 m1 s" , { v.id , tblsize , v.statusflags , v.formatflags , v.contents } )
+	local readyframes , nextrf = { } , 1
+	-- Add frame headers, make into real frames
+	for id , tbl in pairs ( knownids ) do
+		for i , v in pairs ( tbl ) do
+			local size = #v.contents
+			if size >= 268435456 then return ferror ( "Tag too large" , 3 ) end
+			local tblsize
+			if id3version == 4 then tblsize = makesafesync ( size ) 
+			else tblsize = vstruct.explode ( size ) end
+			
+			if id3version == 2 then
+				readyframes [ nextrf ] = vstruct.pack ( "> s m3 s" , { v.id  , tblsize , v.contents } )
+			else
+				readyframes [ nextrf ] = vstruct.pack ( "> s m4 m1 m1 s" , { v.id , tblsize , v.statusflags , v.formatflags , v.contents } )
+			end
+			nextrf = nextrf + 1
 		end
 	end
 	
@@ -1330,7 +1379,7 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 					break
 				end
 			end
-			if err then return print( "Could not create temporary file: " .. err , 3 ) end
+			if err then return updatelog ( "Could not create temporary file: " .. err , 3 ) end
 				
 			-- Write new tag to tmp file
 			wd:write ( tag )
@@ -1357,3 +1406,13 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 	return tag , datadiscarded
 end
 
+function edit ( path , tags , inherit )
+	local overwrite
+	if inherit then 
+		overwrite = true
+	else
+		overwrite = "new"
+	end
+	--generatetag ( tags , path , overwrite , id3version , footer , dontwrite )
+	return generatetag ( tags , path , overwrite , 3 , false , false )
+end

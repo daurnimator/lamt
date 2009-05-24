@@ -193,7 +193,10 @@ function generatetag ( tags )
 	return "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre -- String format doesn't like \0. --string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
 end
 
-function edit ( fd , tags , inherit )
+function edit ( path , tags , inherit )
+	local fd , err = io.open ( path , "rb+" )
+	if not fd then return ferror ( err , 3 ) end
+	
 	if inherit then 
 		local currenttags= info ( fd ) -- inherit from current data
 		for k , v in pairs ( currenttags ) do
@@ -204,15 +207,13 @@ function edit ( fd , tags , inherit )
 	end
 	
 	local id3 = generatetag ( tags )
-	assert(#id3 == 128)
+	
+	if #id3 ~= 128 then return false "Unknown error" end
 	
 	-- Check if file already has an ID3 tag
-	local ok , fail = fd:seek ( "end" , -128 ) -- Seek to start of ID3 tag.
-	if not ok then return ok , fail end
-	if fd:read ( 3 ) ==  "TAG" then 
-		fd:seek ( "cur" , -3 )
-	else -- If file has no id3v1 tag, make tag at end of file
-		fd:seek ( "end" )
+	local starttag = find ( fd )
+	if not starttag then -- If file has no id3v1 tag
+		fd:seek ( "end" ) -- make tag at end of file
 	end
 	local ok , err = fd:write ( id3 )
 	if not ok then return ok , fail end
