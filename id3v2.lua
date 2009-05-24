@@ -19,8 +19,13 @@ require "iconv"
 local genrelist = require "modules.fileinfo.genrelist"
 
 _NAME = "ID3v2 tag reader/writer"
--- http://www.id3.org/id3v2.4.0-structure
-
+-- Specifications:
+ -- http://www.id3.org/id3v2.4.0-structure
+ -- http://www.id3.org/id3v2.4.0-frames
+ -- http://www.id3.org/id3v2.4.0-changes
+ -- http://www.id3.org/id3v2.3.0
+ -- http://www.id3.org/id3v2-00
+ 
 local function desafesync ( tbl )
 	local new , nexti = { } , 1
 	for i = 1 , #tbl do
@@ -498,6 +503,8 @@ local framedecode = {
 			elseif v == "CR" then t [ i ] = "Cover" 
 			elseif tonumber ( v ) then
 				t [ i ] = genrelist [ tonumber ( v ) ]
+			else
+				t [ i ] = v
 			end
 		end
 		return { [ "genre" ] = t }
@@ -668,7 +675,7 @@ local framedecode = {
 	-- Unsynchronised lyrics/text transcription
 	["USLT"] = function ( str )
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
-		local terminator = string.rep ( "\0" , encodings [ t.encoding ].nulls )
+		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
 		local description = str:sub ( 5 , e )
@@ -764,7 +771,7 @@ local framedecode = {
 	["ASPI"] = function ( str ) -- Audio seek point index
 	end ,
 }
-do -- ID3v2.3 frames (Older frames) -- See http://id3.org/id3v2.4.0-changes
+do -- ID3v2.3 frames (Older frames)
 	framedecode["EQUA"] = function ( str ) -- Equalization
 	end
 	framedecode["IPLS"] = function ( str ) -- Involved people list
@@ -970,12 +977,13 @@ function find ( fd )
 	end
 end
 
-function info ( fd , location , item )
+function info ( fd , location )
 	fd:seek ( "set" , location )
 	local header = readheader ( fd )
 	if header then
-		item.tags = { }
-		item.extra = { id3v2version = header.version }
+		local tags = { }
+		local extra = { id3v2version = header.version }
+		
 		local id3tag = fd:read ( header.size )
 		if header.unsynched then
 			id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
@@ -990,7 +998,7 @@ function info ( fd , location , item )
 				if frame then
 					if framedecode [ ok.id ] then
 						--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
-						table.inherit ( item.tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
+						table.inherit ( tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
 					else -- We don't know of this frame type
 						updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
 					end
@@ -1001,7 +1009,7 @@ function info ( fd , location , item )
 				updatelog ( err , 5 )
 			end
 		end
-		return item
+		return tags , extra
 	else
 		return false
 	end
@@ -1403,7 +1411,7 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 		end
 	end
 	
-	return tag , datadiscarded
+	return datadiscarded
 end
 
 function edit ( path , tags , inherit )

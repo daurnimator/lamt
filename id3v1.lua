@@ -18,7 +18,6 @@ require "iconv"
 local genreindex = require "modules.fileinfo.genrelist"
 
 local Locale = "ISO-8859-1"
-
 local toid3 = iconv.new ( Locale , "UTF-8" )
 local fromid3 = iconv.new ( "UTF-8" , Locale )
 
@@ -93,7 +92,7 @@ function info ( fd , offset )
 			end
 			
 		end
-		return tags
+		return tags , { }
 	else
 		-- File doesn't have an ID3v1 Tag
 		return false
@@ -127,8 +126,7 @@ local function makestring ( str , tolength )
 	return str .. string.rep ( "\0" , tolength-#str )
 end
 
-function generatetag ( tags )
-	
+function generatetag ( tags )	
 	local title , artist , album, year , comment , track , genre
 	
 	-- Title
@@ -164,7 +162,7 @@ function generatetag ( tags )
 		year = tags.date
 	else year = { "" }
 	end
-	year = makestring ( ( guessyear( year [ 1 ] ) or "" ) , 4 )
+	year = makestring ( ( guessyear ( year [ 1 ] ) or "" ) , 4 )
 	
 	-- Comment
 	-- No one likes 28 character comments
@@ -173,7 +171,7 @@ function generatetag ( tags )
 
 	-- Track
 	if type( tags.track ) == "table" then 
-		track = tags.track
+		track = tags.tracknumber
 	else track = { "" }
 	end
 	track = string.char ( tonumber ( track [ 1 ] ) or 0 )
@@ -190,7 +188,21 @@ function generatetag ( tags )
 		end
 		genre = string.char ( t )
 	end
-	return "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre -- String format doesn't like \0. --string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
+	
+	local datadiscarded = false
+	for k , v in pairs ( tags ) do
+		if k == "title" or k == "artist" or k == "album" or k == "date" or k == "tracknumber" or k == "genre" then
+			if v [ 2 ] then
+				datadiscarded = true
+				break
+			end
+		else
+			datadiscarded = true
+			break
+		end
+	end
+	local tag = "TAG" .. title .. artist .. album .. year .. comment .. "\0" .. track .. genre -- String format doesn't like \0. --string.format ( "TAG%s%s%s%s%s\0%s%s" , title , artist , album , year , comment , track , genre)
+	return tag , datadiscarded
 end
 
 function edit ( path , tags , inherit )
@@ -208,7 +220,7 @@ function edit ( path , tags , inherit )
 	
 	local id3 = generatetag ( tags )
 	
-	if #id3 ~= 128 then return false "Unknown error" end
+	if #id3 ~= 128 then return ferror ( "Unknown error" , 3 ) end
 	
 	-- Check if file already has an ID3 tag
 	local starttag = find ( fd )
@@ -217,5 +229,7 @@ function edit ( path , tags , inherit )
 	end
 	local ok , err = fd:write ( id3 )
 	if not ok then return ok , fail end
-	return fd:flush ( )
+	fd:flush ( )
+	
+	return 
 end
