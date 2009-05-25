@@ -109,7 +109,7 @@ local function readheader ( fd )
 end
 
 local function twodigit ( str )
-	str = str:gsub( "^%s*(.-)%s*$", "%1" ) -- Trim whitespace
+	str = str:trim ( )
 	if str and #str == 1 then
 		return "0" .. str
 	elseif str and #str == 2 then
@@ -120,7 +120,7 @@ local function twodigit ( str )
 end
 
 local function interpretdatestamp ( str )
-	str = str:gsub( "^%s*(.-)%s*$", "%1" ) -- Trim whitespace
+	str = str:trim ( )
 	
 	local tbl = { }
 	local d , t = unpack ( string.explode ( str , "T" ) )
@@ -963,56 +963,59 @@ end
 -- Trys to find an id3tag in given file handle
  -- Returns the start of the tag as a file offset
 function find ( fd )
-	fd:seek ( "set" ) -- Look at start of file
+	-- Look at start of file
+	fd:seek ( "set" )
 	local h
 	h = readheader ( fd )
-	if h then return fd:seek ( "set" ) end
+	if h then 
+		fd:seek ( "set" )
+		return 0 , h 
+	end
+	-- Look at end of file
 	fd:seek ( "end" , -10 )
 	h = readheader ( fd )
 	if h then
 		local offsetfooter = ( h.size + 20 ) -- Offset to start of footer from end of file
-		fd:seek ( "end" , -offsetfooter) 
+		local offsetheader = fd:seek ( "end" , -offsetfooter) 
 		h = readheader ( fd )
-		if h and h.isfooter then return fd:seek ( "end" , -offsetfooter ) end
+		fd:seek ( "set" , offsetheader ) 
+		if h and h.isfooter then return offsetheader , h end
 	end
+	-- No tag
+	return false
 end
 
-function info ( fd , location )
+function info ( fd , location , header )
 	fd:seek ( "set" , location )
-	local header = readheader ( fd )
-	if header then
-		local tags = { }
-		local extra = { id3v2version = header.version }
-		
-		local id3tag = fd:read ( header.size )
-		if header.unsynched then
-			id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-				:gsub ( "\255%z%z" ,  "\255\0" )
-		end
-		local sd = vstruct.cursor ( id3tag )
-		while sd:seek ( "cur" ) < ( header.size - header.frameheadersize ) do
-			local ok , err = readframeheader ( sd , header )
-			if ok then
-				sd:seek ( "set" , ok.startcontent )
-				local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
-				if frame then
-					if framedecode [ ok.id ] then
-						--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
-						table.inherit ( tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
-					else -- We don't know of this frame type
-						updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
-					end
-				end
-			elseif err == "padding" then
-				break
-			else
-				updatelog ( err , 5 )
-			end
-		end
-		return tags , extra
-	else
-		return false
+
+	local tags , extra = { } , { id3v2version = header.version }
+	
+	local id3tag = fd:read ( header.size )
+	if header.unsynched then
+		id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+			:gsub ( "\255%z%z" ,  "\255\0" )
 	end
+	local sd = vstruct.cursor ( id3tag )
+	while sd:seek ( "cur" ) < ( header.size - header.frameheadersize ) do
+		local ok , err = readframeheader ( sd , header )
+		if ok then
+			sd:seek ( "set" , ok.startcontent )
+			local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
+			if frame then
+				if framedecode [ ok.id ] then
+					--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
+					table.inherit ( tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
+				else -- We don't know of this frame type
+					updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
+				end
+			end
+		elseif err == "padding" then
+			break
+		else
+			updatelog ( err , 5 )
+		end
+	end
+	return tags , extra
 end
 
 local function genWXXXframe ( humanname , v , id3version )
