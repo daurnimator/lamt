@@ -17,6 +17,8 @@ pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 require "vstruct"
 require "iconv"
 
+_NAME = "APEv1 and APEv2 tag reader/writer"
+
 local contenttypes = {
 	[ 0 ] = "UTF-8" ,
 	[ 1 ] = "binary" ,
@@ -34,9 +36,12 @@ local function readflags ( flags )
 end
 
 function readheader ( fd )
+	local offset = fd:seek ( "cur" )
 	if fd:read ( 8 ) == "APETAGEX" then
 		local h = vstruct.unpack ( "< version:u4 size:u4 items:u4 < flags:m4 x8" , fd )
-		if h.version >= 2000 then table.inherit ( h , readflags ( h.flags ) , true ) 
+		h.start = offset
+		if h.version >= 2000 then
+			table.inherit ( h , readflags ( h.flags ) , true ) 
 		else -- Version 1
 			h.isfooter = true
 			h.hasfooter = true
@@ -95,7 +100,7 @@ local decode = {
 		if tracknum then
 			return { tracknumber = tracknum , totaltracks = decodeformats [ "number" ] ( tot , version ) }
 		else
-			return { tracknumber = track }
+			return { tracknumber = { track } }
 		end
 	end ,
 	[ "composer" ] = "utf-8" ,	
@@ -129,12 +134,14 @@ local decode = {
 		if discnum then
 			return { discnumber = discnum , totaldiscs = decodeformats [ "number" ] ( tot , version ) }
 		else
-			return { discnumber = disc }
+			return { discnumber = { disc } }
 		end
 	end ,
 }
 
-local function interpretitem ( key , flags , vals )
+local function interpretitem ( key , flags , val )
+	local vals = val:explode ( "\0" , true )
+	
 	local func
 	if type ( decode [ key ]  ) == "function" then
 		func = decode [ key ]
@@ -162,9 +169,7 @@ function readitem ( fd , header )
 	local val = fd:read ( raw.valuesize )
 	local flags = readflags ( raw.flags )
 	
-	local vals = val:explode ( "\0" , true )
-	
-	return key , flags , vals
+	return key , flags , val
 end
 
 function info ( fd , location , header )
@@ -173,7 +178,7 @@ function info ( fd , location , header )
 	local tags , extra = { } , { apeversion = header.version }
 	
 	for i = 1 , header.items do
-		if fd:seek ( "cur" ) >= location + header.size then break end
+		if fd:seek ( "cur" ) >= ( location + header.size ) then break end
 		table.inherit ( tags , interpretitem ( readitem ( fd , header ) ) , true )
 	end
 	
@@ -185,17 +190,137 @@ function find ( fd )
 	fd:seek ( "set" )
 	local h = readheader ( fd )
 	if h then 
-		fd:seek ( "set" )
-		return 0 , h 
+		fd:seek ( "set" , 32 )
+		return 32 , h 
 	end
 	-- Look at end of file
 	fd:seek ( "end" , -32 )
 	local h = readheader ( fd )
 	if h then
 		local offsetfooter = ( h.size + ( ( h.hasheader and 32 ) or 0 ) ) -- Offset to start of footer from end of file
-		local offsetfirstitem = fd:seek ( "end" , -offsetfooter) 
+		local offsetfirstitem = fd:seek ( "end" , -offsetfooter)
 		if h and h.isfooter then return offsetfirstitem , h end
 	end
 	-- No tag
 	return false
+end
+
+function generateutf8item ( key , tbl )
+	local flags = { false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false }
+	local str = table.concat ( tbl , "\0" )
+	return { flags = flags , value = str }
+end
+
+function edit ( path , tags , inherit )
+	local fd , err = io.open ( path , "rb+" )
+	if not fd then return ferror ( err , 3 ) end
+	
+	local offset , h = find ( fd )
+	
+	-- Make table of new items
+	local newitems = { }
+	for k , v in pairs ( tags ) do
+		if not newitems [ k ] then
+			newitems [ k ] = v
+		else
+			table.append ( newitems [ k ] , v )
+		end
+	end
+	
+	if inherit then
+		for i = 1 , h.items do
+			if fd:seek ( "cur" ) >= ( offset + h.size ) then break end
+			local key , flags , val = readitem ( fd , h )
+			if newitems [ key ] then
+				for k , v in pairs ( interpretitem ( key , flags , val ) ) do
+					if not newitems [ k ] then
+						newitems [ k ] = v
+					else
+						table.append ( newitems [ k ] , v )
+					end
+				end
+			else
+				newitems [ key ] = { { flags = flags , value = val } }
+			end
+		end
+	end
+	
+	local tag = ""
+	local itemcount = 0
+	for k , v in pairs ( newitems ) do
+		local item = generateutf8item ( k , v )
+		tag = tag .. vstruct.pack ( "< u4 m4 z s" , { #item.value , item.flags , k , item.value } )
+		itemcount = itemcount + 1
+	end
+		
+	local flags = { false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , true }
+	-- Make footer
+	local footer = vstruct.pack ( "< s8 u4 u4 u4 m4 x8" , { "APETAGEX" , 2000 , #tag + 32 , itemcount , flags } )
+	-- Make header
+	flags [ 30 ] = true
+	local header = vstruct.pack ( "< s8 u4 u4 u4 m4 x8" , { "APETAGEX" , 2000 , #tag + 32 , itemcount , flags } )
+	
+	tag = header .. tag .. footer
+	
+	local cutoffstart , cutoffend = 0 , 0
+	
+	if offset == 0 then -- Tag at start of file, delete, place at end of file
+		cutoffstart = 32 + h.size
+	end
+	local offset , h = find ( fd )
+	local filesize = fd:seek ( "end" )
+	if offset then -- Footer at end of file
+		if filesize - offset > #tag then -- Fits or goes over, ok to write
+			cutoffend = filesize - offset
+		end
+	end
+	
+	if cutoffstart > 0 or cutoffend > 0 then
+		local dir = string.match ( path , "(.*/)" ) or  "./"
+		local filename = string.match ( path , "([^/]+)$" )
+			
+		-- Make a tmpfile
+		local tmpfilename , wd , err
+		for lim = 1 ,  20 do 
+			tmpfilename = dir .. filename .. ".tmp" .. lim
+			local td
+			td , err = io.open ( tmpfilename , "r" )
+			if not td and err:find ( "No such file or directory" ) then -- Found an empty file
+				wd , err = io.open ( tmpfilename , "wb" )
+				break
+			end
+		end
+		if err then return updatelog ( "Could not create temporary file: " .. err , 3 ) end
+			
+		fd:seek ( "cur" , cutoffstart )
+			
+		local bytestogo = filesize - cutoffstart - cutoffend - 32
+		while true do
+			local bytestoread = ( bytestogo >= 1024 and 1024 ) or bytestogo
+			--[[if bytestogo >= 1024 then
+				bytestoread = 1024
+			else
+				bytestoread = bytestogo
+			end--]]
+			local buff = fd:read ( bytestoread )
+			if not buff then break end
+			wd:write ( buff )
+			bytestogo = bytestogo - #buff
+		end
+		fd:close ( )
+		
+		wd:write ( tag )
+		
+		wd:flush ( )
+		wd:close ( )
+		os.remove ( path ) 
+		os.rename ( tmpfilename , path )
+		os.remove ( tmpfilename ) 
+	else
+		fd:seek ( "set" , offset )
+		fd:write ( tag )
+		fd:close ( )
+	end
+	
+	return tag
 end
