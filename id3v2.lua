@@ -1390,7 +1390,7 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 					break
 				end
 			end
-			if err then return updatelog ( "Could not create temporary file: " .. err , 3 ) end
+			if err then return ferror ( "Could not create temporary file: " .. err , 3 ) end
 				
 			-- Write new tag to tmp file
 			wd:write ( tag )

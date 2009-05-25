@@ -93,8 +93,8 @@ local decode = {
 	[ "conductor" ] = "utf-8" ,	
 	[ "track" ] = function ( str , version )
 		local s , e = string.find ( str , "/" , 1 , true )
-		local track = str:sub ( 1 , s - 1 )
-		local tot = str:sub ( e + 1 )
+		local track = s and str:sub ( 1 , s - 1 ) or str
+		local tot = e and str:sub ( e + 1 ) or ""
 		
 		local tracknum = decodeformats [ "number" ] ( track , version )
 		if tracknum then
@@ -127,8 +127,8 @@ local decode = {
 	[ "dummy" ] = "ignore" ,
 	[ "disc" ] = function ( str , version )
 		local s , e = string.find ( str , "/" , 1 , true )
-		local disc = str:sub ( 1 , s - 1 )
-		local tot = str:sub ( e + 1 )
+		local disc = s and str:sub ( 1 , s - 1 ) or str
+		local tot = e and str:sub ( e + 1 ) or ""
 		
 		local discnum = decodeformats [ "number" ] ( disc , version )
 		if discnum then
@@ -156,7 +156,7 @@ local function interpretitem ( key , flags , val )
 	local result = { }
 	for i , v in ipairs ( vals ) do
 		v = v:trim ( )
-		table.inherit ( result , func ( v , version ) , true )
+		table.inherit ( result , func ( v , version ) , false )
 	end
 	
 	return result
@@ -207,7 +207,20 @@ end
 
 function generateutf8item ( key , tbl )
 	local flags = { false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false }
-	local str = table.concat ( tbl , "\0" )
+	
+	-- Remove duplicates entries
+	local newtable = { }
+	for i , v in ipairs ( tbl ) do
+		local dupe = false
+		for ii , vv in pairs ( newtable ) do
+			if v == vv then dupe = true break end
+		end
+		if not dupe then
+			newtable [ #newtable + 1 ] = v
+		end
+	end
+	
+	local str = table.concat ( newtable , "\0" )
 	return { flags = flags , value = str }
 end
 
@@ -240,7 +253,7 @@ function edit ( path , tags , inherit )
 					end
 				end
 			else
-				newitems [ key ] = { { flags = flags , value = val } }
+				newitems [ key ] = { flags = flags , value = val }
 			end
 		end
 	end
@@ -264,13 +277,15 @@ function edit ( path , tags , inherit )
 	
 	local cutoffstart , cutoffend = 0 , 0
 	
-	if offset == 0 then -- Tag at start of file, delete, place at end of file
+	if offset == 0 then -- Tag at start of file
 		cutoffstart = 32 + h.size
 	end
+	
 	local offset , h = find ( fd )
+	if h.hasheader then offset = offset - 32 end
 	local filesize = fd:seek ( "end" )
 	if offset then -- Footer at end of file
-		if filesize - offset > #tag then -- Fits or goes over, ok to write
+		if ( filesize - offset ) > #tag then -- Fits or goes over, ok to write
 			cutoffend = filesize - offset
 		end
 	end
@@ -290,20 +305,15 @@ function edit ( path , tags , inherit )
 				break
 			end
 		end
-		if err then return updatelog ( "Could not create temporary file: " .. err , 3 ) end
+		if err then return ferror ( "Could not create temporary file: " .. err , 3 ) end
 			
-		fd:seek ( "cur" , cutoffstart )
+		fd:seek ( "set" , cutoffstart )
 			
 		local bytestogo = filesize - cutoffstart - cutoffend - 32
 		while true do
 			local bytestoread = ( bytestogo >= 1024 and 1024 ) or bytestogo
-			--[[if bytestogo >= 1024 then
-				bytestoread = 1024
-			else
-				bytestoread = bytestogo
-			end--]]
 			local buff = fd:read ( bytestoread )
-			if not buff then break end
+			if #buff == 0 then break end
 			wd:write ( buff )
 			bytestogo = bytestogo - #buff
 		end
@@ -322,5 +332,5 @@ function edit ( path , tags , inherit )
 		fd:close ( )
 	end
 	
-	return tag
+	return #tag
 end
