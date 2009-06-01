@@ -102,6 +102,7 @@ local function readheader ( fd )
 				fd:seek ( "cur" , -4 )
 			end
 		end
+		t.endheader = fd:seek ( "cur" )
 		return t
 	else
 		return false , "Not an ID3v2 header/footer"
@@ -986,7 +987,7 @@ function find ( fd )
 end
 
 function info ( fd , location , header )
-	fd:seek ( "set" , location )
+	fd:seek ( "set" , header.endheader )
 
 	local tags , extra = { } , { id3v2version = header.version }
 	
