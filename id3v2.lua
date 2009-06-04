@@ -601,7 +601,7 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name ):lower ( )
+		local field = ascii ( str:sub ( 2 , s - 1 ) , encodings [ encoding ].name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
 		local st = string.explode ( text , terminator , true )
@@ -644,7 +644,7 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name )
+		local field = ascii ( str:sub ( 2 , s - 1 ) , encodings [ encoding ].name )
 		local url = str:sub ( e + 1 )
 		
 		if #field == 0 or not string.find ( field , "%w" )  then 
