@@ -16,7 +16,7 @@ module ( "lomp.fileinfo.id3v2" , package.see ( lomp ) )
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 require "vstruct"
 require "iconv"
-local genrelist = require "modules.fileinfo.genrelist"
+local genrelist = require ( select ( 1 , ... ):match ( "(.*%.)[^.]+$" ) .. "genrelist" )
 
 _NAME = "ID3v2 tag reader/writer"
 -- Specifications:
@@ -102,7 +102,6 @@ local function readheader ( fd )
 				fd:seek ( "cur" , -4 )
 			end
 		end
-		t.endheader = fd:seek ( "cur" )
 		return t
 	else
 		return false , "Not an ID3v2 header/footer"
@@ -601,7 +600,7 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , s - 1 ) , encodings [ encoding ].name ):lower ( )
+		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
 		local st = string.explode ( text , terminator , true )
@@ -644,7 +643,7 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , s - 1 ) , encodings [ encoding ].name )
+		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name )
 		local url = str:sub ( e + 1 )
 		
 		if #field == 0 or not string.find ( field , "%w" )  then 
@@ -987,8 +986,16 @@ function find ( fd )
 end
 
 function info ( fd , location , header )
-	fd:seek ( "set" , header.endheader )
-
+	if not location then 
+		location , header = find ( fd )
+		fd:seek ( "cur" , header.firstframeoffset )
+	elseif header then
+		fd:seek ( "set" , location + header.firstframeoffset )
+	else
+		fd:seek ( "set" , location  )
+		header = readheader ( fd )
+	end
+	
 	local tags , extra = { } , { id3v2version = header.version }
 	
 	local id3tag = fd:read ( header.size )

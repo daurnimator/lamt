@@ -15,7 +15,7 @@ module ( "lomp.fileinfo.id3v1" , package.see ( lomp ) )
 
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 require "iconv"
-local genreindex = require "modules.fileinfo.genrelist"
+local genreindex = require ( select ( 1 , ... ):match ( "(.*%.)[^.]+$" ) .. "genrelist" )
 
 local Locale = "ISO-8859-1"
 local toid3 = iconv.new ( Locale , "UTF-8" )
