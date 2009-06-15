@@ -1014,7 +1014,13 @@ function info ( fd , location , header )
 					--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
 					table.inherit ( tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
 				else -- We don't know of this frame type
-					updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. frame , 5 )
+					local content
+					if ok.size > 100 then
+						content = frame:sub ( 1 , 80 ) .. " \t\t Trimmed due to excessive length"
+					else
+						content = frame
+					end
+					updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. content , 5 )
 				end
 			end
 		elseif err == "padding" then
