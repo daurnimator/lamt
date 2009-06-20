@@ -108,12 +108,20 @@ function info ( item )
 	local fd = io.open ( item.path , "rb" )
 	item = item or { }
 	
+	local tagatsof = 0 -- Bytes that tags use at start of file
 	local tagateof = 0 -- Bytes that tags use at end of file
 	-- APE
 	if not item.tagtype then
 		local offset , header = fileinfo.APE.find ( fd )
 		if offset then
-			if offset > 32 then tagateof = header.size end
+			if offset == 0 then 
+				tagatsof = header.size
+			else
+				tagateof = header.size 
+				if header.hasheader then
+					tagateof = tagateof + 32
+				end
+			end
 			item.header = header
 			item.tagtype = "APE"
 			item.tags , item.extra = fileinfo.APE.info ( fd , offset , header )
@@ -124,7 +132,11 @@ function info ( item )
 	if not item.tagtype then
 		local offset , header = fileinfo.id3v2.find ( fd )
 		if offset then
-			if offset > 0 then tagateof = header.size end
+			if offset == 0 then
+				tagatsof = header.size + 10
+			else
+				tagateof = header.size + 10
+			end
 			item.header = header
 			item.tagtype = "id3v2"
 			item.tags , item.extra = fileinfo.id3v2.info ( fd , offset , header )
@@ -149,20 +161,24 @@ function info ( item )
 	end
 	
 	local filesize = fd:seek ( "end" )
-	fd:seek ( "set" )
-	local b , c , d
-	repeat
-		while true do
-			if fd:read ( 1 ) == "\255" then break end
-			if fd:seek ( "cur" ) == filesize then return ferror ( "Not an mpeg" , 3 ) end
+	fd:seek ( "set" )--, tagatsof )
+	
+	local new = fd:read ( 2 )
+	local old = ""
+	local offset
+	while new do
+		local s , e = ( old .. new ):find ( "\255[\239-\255]" )
+		if s then
+			offset = fd:seek ( "cur" , s - #new + #old )
+			break
 		end
-		b = string.byte ( fd:read ( 1 ) )
-	until b >= 239 -- ( 128+64+32+16 - 1 )
-	local offset = fd:seek ( "cur" ) - 1
-	c , d = string.byte ( fd:read ( 2 ) , 1 , 2 )
-
-	local v = mpegversion [ bitnum( b , 4 , 5 ) ]
-	local l = layer [ bitnum( b , 6 , 7 ) ]
+		local old = new:sub ( -1 , -1 )
+		new = fd:read ( 2048 )
+	end
+	local b , c , d = string.byte ( fd:read ( 3 ) , 1 , 3 )
+	
+	local v = mpegversion [ bitnum ( b , 4 , 5 ) ]
+	local l = layer [ bitnum ( b , 6 , 7 ) ]
 	local crc = bitread ( b , 8 ) == 0
 	local r = getbitrate ( c , v , l )
 	local s = getsamplerate ( c , v )
@@ -252,6 +268,8 @@ function info ( item )
 	item.samplerate = samplerate
 	item.bitrate = r
 	item.filesize = filesize
+	
+	fd:close ( )
 	
 	return item
 end

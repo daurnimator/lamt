@@ -102,9 +102,13 @@ function info ( item )
 		item.samplerate = item.extra.samplerate
 		item.bitrate = 	item.extra.samplerate*item.extra.bitspersample
 		item.filesize = fd:seek ( "end" )
+		
+		fd:close ( )
+		
 		return item
 	else
 		-- not a flac file
+		fd:close ( )
 		return false , "Not a flac file"
 	end
 end
