@@ -24,13 +24,15 @@ function find ( fd )
 	end
 end
 
-function info ( fd , item )
+function info ( item )
+	local fd = io.open ( item.path , "rb" )
+	item = item or { }
+	
 	fd:seek ( "set" ) -- Rewind file to start
 	-- Format info found at http://flac.sourceforge.net/format.html
 	if fd:read ( 4 ) == "fLaC" then 
 		item.format = "flac"
 		item.extra = { } 
-		item.tags = { }
 		
 		local t
 		repeat
@@ -43,22 +45,16 @@ function info ( fd , item )
 			--print ( lastmetadatablock , blocktype , blocklength )
 			
 			if blocktype == 0 then -- Stream info
-				t = vstruct.unpack ( "> u2 u2 u3 u3 <m8> u16" , fd )
+				t = vstruct.unpack ( "> u2 u2 u3 u3 m8 u16" , fd )
 				item.extra.minblocksize = t [ 1 ]
 				item.extra.maxblocksize = t [ 2 ]
 				item.extra.minframesize = t [ 3 ]
 				item.extra.maxframesize = t [ 4 ]
 				item.extra.samplerate = vstruct.implode { unpack ( t [ 5 ] , 45 , 64 ) }
 				item.extra.channels = vstruct.implode { unpack ( t [ 5 ] , 42 , 44 ) } + 1
-				item.extra.bitspersample = vstruct.implode { unpack ( t [ 5 ] , 37 , 41 ) }
+				item.extra.bitspersample = vstruct.implode { unpack ( t [ 5 ] , 37 , 41 ) } + 1
 				item.extra.totalsamples = vstruct.implode { unpack ( t [ 5 ] , 1 , 36 ) }
 				item.extra.md5rawaudio = t [ 6 ]
-				item.extra.length = item.extra.totalsamples / item.extra.samplerate
-				--t [ 1 ] = nil
-				--samplerate = t [ 5 ]
-				--channels = t [ 6 ] + 1
-				--bitspersample = t [ 7 ]
-				--totalsamples = t [ 8 ]
 			elseif blocktype == 1 then -- Padding
 				item.extra.padding = item.extra.padding or { }
 				table.insert ( item.extra.padding , { start = fd:seek ( ) , length = blocklength , } )
@@ -71,6 +67,7 @@ function info ( fd , item )
 				t = vstruct.unpack ( "> x" .. blocklength , fd ) -- We don't deal with seektables, skip over it
 			elseif blocktype == 4 then
 				item.tagtype = "vorbiscomment"
+				item.tags = { }
 				item.extra.startvorbis = fd:seek ( ) - 4
 				
 				require "modules.fileinfo.vorbiscomments"
@@ -95,15 +92,24 @@ function info ( fd , item )
 				local picturedata = t [ 1 ]
 			end
 		until lastmetadatablock == 1
-		item.length = math.floor( item.extra.length + 0.5 )
+		if not item.tags then
+			-- Figure out from path
+			item.tagtype = "pathderived"
+			item.tags = fileinfo.tagfrompath.info ( path , config.tagpatterns.default )
+		end
+		item.length = item.extra.totalsamples / item.extra.samplerate
+		item.channels = item.extra.channels
+		item.samplerate = item.extra.samplerate
+		item.bitrate = 	item.extra.samplerate*item.extra.bitspersample
+		item.filesize = fd:seek ( "end" )
 		return item
 	else
 		-- not a flac file
-		return false
+		return false , "Not a flac file"
 	end
 end
 
-function edit ( fd , tags )
+function write ( fd , tags )
 	local item = info ( fd )
 	
 	local vendor_string = item.extra.vendor_string or "Xiph.Org libVorbis I 20020717"
@@ -146,5 +152,16 @@ function edit ( fd , tags )
 	end
 	
 	-- Write
-	
 end
+
+function edit ( path , tags , inherit )
+	local fd = io.open ( path , "rb+" )
+	if not fd then return ferror ( err , 3 ) end
+	
+	--write ( fd , tags )
+	
+	-- Flac editing not ready yet
+	return false
+end
+
+return { { "flac" } , info , edit }

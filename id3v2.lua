@@ -228,7 +228,7 @@ local frameencode = {
 	[ "encoded by" ] = { false , "TEN" , "TENC" , "TENC" } ,
 	
 	[ "bpm" ] = { false , "TBP" , "TBPM" , "TBPM" } ,
-	[ "length" ] = { false , "TLE" , "TLEN" , "TLEN" } ,
+	-- Don't do length, its a special field/tag
 	[ "musical key" ] = { false , "TKE" , "TKEY" , "TKEY" } ,
 	[ "language" ] = { false , "TLA" , "TLAN" , "TLAN" } ,
 	[ "genre" ] = { false , "TCO" , "TCON" , "TCON" } , -- Special
@@ -1016,7 +1016,7 @@ function info ( fd , location , header )
 				else -- We don't know of this frame type
 					local content
 					if ok.size > 100 then
-						content = frame:sub ( 1 , 80 ) .. " \t\t Trimmed due to excessive length"
+						content = frame:sub ( 1 , 80 ) .. " \t ...(Trimmed due to excessive length)"
 					else
 						content = frame
 					end
@@ -1224,7 +1224,7 @@ end
  -- id3version 	= 2-4 		=> id3 version to write
  -- footer 		= boolean 	=> write footer instead of header - id3version must be 4
  -- dontwrite 	= boolean 	=> just generate tag
-function generatetag ( tags , path , overwrite , id3version , footer , dontwrite )
+function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 	local fd , err = io.open ( path , "rb+" )
 	if not fd then return ferror ( err , 3 ) end
 	
@@ -1239,64 +1239,65 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 	local sizetofitinto = 0 -- Size available to fit into from value of starttag
 	
 	local knownids , nextidnum = { } , 1
-	if overwrite ~= "new" and starttag then -- File has existing tag
+	if starttag then -- File has existing tag
 		local t
-		if io.type ( fd ) then -- Get existing tag
-			fd:seek ( "set" , starttag )
-			local header , err = readheader ( fd )
-			if header then
-				t , nexti = { version = header.version } , 1
-				local id3tag = fd:read ( header.size )
-				if header.unsynched then
-					id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-						:gsub ( "\255%z%z" ,  "\255\0" )
-				end
-				local sd = vstruct.cursor ( id3tag )
-				while sd:seek ( "cur" ) < ( header.size - header.frameheadersize  ) do
-					local ok , err = readframeheader ( sd , header )
-					if ok then
-						sd:seek ( "set" , ok.startcontent )
-						local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
+		-- Get existing tag
+		fd:seek ( "set" , starttag )
+		local header , err = readheader ( fd )
+		if overwrite == "new" then
+			fd:seek ( "set" , header.size )
+		elseif header then
+			t , nexti = { version = header.version } , 1
+			local id3tag = fd:read ( header.size )
+			if header.unsynched then
+				id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
+					:gsub ( "\255%z%z" ,  "\255\0" )
+			end
+			local sd = vstruct.cursor ( id3tag )
+			while sd:seek ( "cur" ) < ( header.size - header.frameheadersize  ) do
+				local ok , err = readframeheader ( sd , header )
+				if ok then
+					sd:seek ( "set" , ok.startcontent )
+					local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 						if err then -- If can't decode, skip over the frame
-						else
-							t [ nexti ] = { id = ok.id , contents = frame , statusflags = ok.statusflags , formatflags = ok.formatflags }
-							nexti = nexti + 1
-						end
-					elseif err == "padding" then
-						break
+					else
+						t [ nexti ] = { id = ok.id , contents = frame , statusflags = ok.statusflags , formatflags = ok.formatflags }
+						nexti = nexti + 1
+					end
+				elseif err == "padding" then
+					break
+				end
+			end
+			t.paddingstart = fd:seek ( "cur" )
+			t.paddingend = header.size - starttag
+			sizetofitinto = 10 + header.size
+			
+			if t.version == id3version then -- Tag already correct version
+				for i , v in ipairs ( t ) do
+					if not knownids [ v.id ] then
+						knownids [ v.id ] = { v }
+					else
+						knownids [ v.id ] [ #( knownids [ v.id ] ) + 1 ] = v
 					end
 				end
-				t.paddingstart = fd:seek ( "cur" )
-				t.paddingend = header.size - starttag
-				sizetofitinto = 10 + header.size
-			end
-		end
-		
-		if t.version == id3version then -- Tag already correct version
-			for i , v in ipairs ( t ) do
-				if not knownids [ v.id ] then
-					knownids [ v.id ] = { v }
-				else
-					knownids [ v.id ] [ #( knownids [ v.id ] ) + 1 ] = v
-				end
-			end
-		
-		else -- Convert tag to other version
-			io.stderr:write("wrong id3v2 version \t File:\t" , t.version , "\tWriting:\t" , id3version ,"\n")
-			local tags = { }
-			for i , v in ipairs ( t ) do 
-				if framedecode [ v.id ] then
-					table.inherit ( tags , ( framedecode [ v.id ] ( v.contents ) or { } ) , true )
-				end
-			end
-			local existing , dd = generateframes ( tags , id3version , overwrite )
-			datadiscarded = dd or datadiscarded
 			
-			for i , v in ipairs ( existing ) do
-				if not knownids [ v.id ] then
-					knownids [ v.id ] = { v }
-				else
-					knownids [ v.id ] = clashfunc ( knownids [ v.id ] , v , overwrite )
+			else -- Convert tag to other version
+				io.stderr:write("wrong id3v2 version \t File:\t" , t.version , "\tWriting:\t" , id3version ,"\n")
+				local tags = { }
+				for i , v in ipairs ( t ) do 
+					if framedecode [ v.id ] then
+						table.inherit ( tags , ( framedecode [ v.id ] ( v.contents ) or { } ) , true )
+					end
+				end
+				local existing , dd = generateframes ( tags , id3version , overwrite )
+				datadiscarded = dd or datadiscarded
+				
+				for i , v in ipairs ( existing ) do
+					if not knownids [ v.id ] then
+						knownids [ v.id ] = { v }
+					else
+						knownids [ v.id ] = clashfunc ( knownids [ v.id ] , v , overwrite )
+					end
 				end
 			end
 		end
@@ -1372,7 +1373,7 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
 	
 	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , tostring ( id3version ), flags , makesafesync ( #padded ) , padded } )
-
+	
 	-- Write tag to file
 	fd:seek ( "set" , starttag )
 	io.stderr:write("Write starts at\t" .. starttag .. "\tHave this much room:\t" .. sizetofitinto .. "\tNeed this much room:\t" .. sizeheader + #allframes .. "\tPadding this much:\t" .. amountofpadding .. "\tTag + padding=\t" .. #tag .. "\n" )
@@ -1429,15 +1430,4 @@ function generatetag ( tags , path , overwrite , id3version , footer , dontwrite
 	end
 	
 	return datadiscarded
-end
-
-function edit ( path , tags , inherit )
-	local overwrite
-	if inherit then 
-		overwrite = true
-	else
-		overwrite = "new"
-	end
-	--generatetag ( tags , path , overwrite , id3version , footer , dontwrite )
-	return generatetag ( tags , path , overwrite , 3 , false , false )
 end
