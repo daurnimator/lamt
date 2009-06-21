@@ -488,7 +488,13 @@ local framedecode = {
 		return { [ "bpm" ] = readtextframe ( str ) }
 	end ,
 	["TLEN"] = function ( str ) -- Length
-		return { [ "length" ] = readtextframe ( str ) }
+		local t = { }
+		for k , v in ipairs ( readtextframe ( str ) ) do
+			if tonumber ( v ) then 
+				t [ #t + 1 ] = tonumber ( v ) / 1000 
+			end
+		end
+		return { [ "length" ] = t }
 	end ,
 	["TKEY"] = function ( str ) -- Initial key
 		return { [ "musical key" ] = readtextframe ( str ) }

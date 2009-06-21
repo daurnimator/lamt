@@ -18,6 +18,8 @@ require "modules.fileinfo.id3v2"
 require "modules.fileinfo.id3v1"
 require "modules.fileinfo.tagfrompath"
 
+local magicpattern = "\255[\239-\254]"
+
 function bitread ( b , pos )
 	return math.floor ( ( b % ( 2^pos ) ) / 2^(pos-1) )
 end
@@ -43,20 +45,20 @@ local layer = {
 }
 local bitrate = {
 	[0] = { } ,
-	[1] = { 32 , 	32 , 		32 , 		32 , 		8 } ,
-	[2] = { 64 ,	48 , 		40 , 		48 , 		16 } ,
-	[3] = { 96 , 	56 , 		48 , 		56 , 		24 } ,
-	[4] = { 128 , 	64 , 		56 , 		64 , 		32 } ,
-	[5] = { 160 , 	80 , 		64 , 		80 , 		40 } ,
-	[6] = { 192 , 	96 , 		80 , 		96 , 		48 } ,
-	[7] = { 224 , 	112 , 	96 , 		112 , 	56 } ,
-	[8] = { 256 , 	128 , 	112 , 	128 , 	64 } ,
-	[9] = { 288 , 	160 , 	128 , 	144 , 	80 } ,
-	[10] = { 320 , 	192 , 	160 , 	160 , 	96 } ,
-	[11] = { 352 , 	224 , 	192 , 	176 , 	112 } ,
-	[12] = { 384 , 	256 , 	224 , 	192 , 	128 } ,
-	[13] = { 416 , 	320 , 	256 , 	224 , 	144 } ,
-	[14] = { 448 , 	384 , 	320 , 	256 , 	160 } ,
+	[1] = { 32000 , 	32000 , 	32000 , 	32000 , 	8000 } ,
+	[2] = { 64000 ,	48000 , 	40000 , 	48000 , 	16000 } ,
+	[3] = { 96000 , 	56000 , 	48000 , 	56000 , 	24000 } ,
+	[4] = { 128000 , 	64000 , 	56000 , 	64000 , 	32000 } ,
+	[5] = { 160000 , 	80000 , 	64000 , 	80000 , 	40000 } ,
+	[6] = { 192000 , 	96000 , 	80000 , 	96000 , 	48000 } ,
+	[7] = { 224000 , 	112000 , 	96000 , 	112000 , 	56000 } ,
+	[8] = { 256000 , 	128000 , 	112000 , 	128000 , 	64000 } ,
+	[9] = { 288000 , 	160000 , 	128000 , 	144000 , 	80000 } ,
+	[10] = { 320000 , 	192000 , 	160000 , 	160000 , 	96000 } ,
+	[11] = { 352000 , 	224000 , 	192000 , 	176000 , 	112000 } ,
+	[12] = { 384000 , 	256000 , 	224000 , 	192000 , 	128000 } ,
+	[13] = { 416000 , 	320000 , 	256000 , 	224000 , 	144000 } ,
+	[14] = { 448000 , 	384000 , 	320000 , 	256000 , 	160000 } ,
 	[15] = { false , false , false , false }
 }
 local function getbitrate ( c , v , l )
@@ -161,24 +163,24 @@ function info ( item )
 	end
 	
 	local filesize = fd:seek ( "end" )
-	fd:seek ( "set" )--, tagatsof )
+	fd:seek ( "set" , tagatsof )
 	
 	local new = fd:read ( 2 )
 	local old = ""
 	local offset
 	while new do
-		local s , e = ( old .. new ):find ( "\255[\239-\255]" )
+		local s , e = ( old .. new ):find ( magicpattern )
 		if s then
 			offset = fd:seek ( "cur" , s - #new + #old )
 			break
 		end
-		local old = new:sub ( -1 , -1 )
+		local old = new:sub ( #magicpattern-1 )
 		new = fd:read ( 2048 )
 	end
 	local b , c , d = string.byte ( fd:read ( 3 ) , 1 , 3 )
 	
 	local v = mpegversion [ bitnum ( b , 4 , 5 ) ]
-	local l = layer [ bitnum ( b , 6 , 7 ) ]
+	local l = layer [ bitnum ( b , 6 , 7 ) ] or 3 -- Guess mp3 if not known
 	local crc = bitread ( b , 8 ) == 0
 	local r = getbitrate ( c , v , l )
 	local s = getsamplerate ( c , v )
@@ -189,7 +191,7 @@ function info ( item )
 	if channelmode == 3 then channels = 1 else channels = 2 end
 	local copyright = bitread ( d , 5 ) == 1
 	local o = bitread ( d , 6 ) == 1
-	local e = bitnum ( d , 7 , 8 )
+	local emph = bitnum ( d , 7 , 8 )
 
 	local length , frames , bytes , quality
 
@@ -228,15 +230,41 @@ function info ( item )
 		end
 	end
 	if not bytes then
-		bytes = fd:seek ( "end" ) - offset - tagateof
+		bytes = filesize - offset - tagateof
 	end
-	if frames then
+	if frames and s then
 		length = frames * samplesperframe [ v ] [ l ] / s
 		r = bytes*8/(length)
-	else
-		local filesize = bytes
-		length = filesize / ( r * 8 )
+	elseif type ( r ) == "number" then
+		length = bytes*8 / r
+	elseif item.tags.length then
+		length = item.tags.length [ 1 ]
+	elseif s then
+		-- Lets go frame finding!
+		local frames = 1
+		local old = ""
+		while true do
+			new = fd:read ( 2048 )
+			if not new then break end
+			frames = frames + select ( 2 , ( old .. new ):gsub ( magicpattern , { } ) )
+			local old = new:sub ( #magicpattern-1 )
+		end
+		length = frames * samplesperframe [ v ] [ l ] / s
+		--print(frames,length)
+	else -- No idea
+		--[[fd:seek ( "set" )
+		local a = fd:read ( "*a" )
+		local frames = select(2,a:gsub ( magicpattern , { }))
+		print(frames)
+		--print(a:find ( "Xing" ))
+		--print(a:find ( "MLLT" ))--]]
+		length = 0
 	end
+	--[[if not length or length == 0 then
+		print( item.path )
+		print( v , l , bytes , r , s , samplesperframe [ v ] [ l ] , unpack ( item.tags.length or { } ) )
+	end
+	print(item.path , length)--]]
 	
 	e = item.extra
 	e.mpegversion = v
@@ -246,13 +274,12 @@ function info ( item )
 	e.samplerate = s
 	e.padded = padded
 	e.channels = channels
-	e.channels = channels
 	e.channelmode = channelmode 
 	e.channelmodestr = channelmodes [ channelmode ]
 	e.copyright = copyright
 	e.original = o
-	e.emphasis = e
-	e.emphasisstr = emphasis [ e ]
+	e.emphasis = emph
+	e.emphasisstr = emphasis [ emph ]
 	e.length = length
 	e.quality = quality
 	e.bytes = bytes
@@ -264,8 +291,8 @@ function info ( item )
 	end
 	
 	item.length = length
-	item.channels = channels
-	item.samplerate = samplerate
+	item.channels = channels+10
+	item.samplerate = s
 	item.bitrate = r
 	item.filesize = filesize
 	
