@@ -21,7 +21,8 @@ require "modules.fileinfo.id3v2"
 require "modules.fileinfo.id3v1"
 require "modules.fileinfo.tagfrompath"
 
-local magicpattern = "\255[\226-\231\242-\247\250-\255].."
+-- If quick it set, lengths and bitrates of many VBR files will probably be incorrect
+local quick = false
 
 local function bitread ( b , from , to )
 	to = to or from
@@ -103,6 +104,7 @@ function validframe ( a , b , c , d )
 		or bitread ( b , 4 , 5 ) == 1 -- Invalid Mpeg Version
 		or b % 8 < 2 -- bitread ( b , 2 , 3 ) == 0 -- Invalid Layer
 		or c >= 240 --bitread ( c , 5 , 8 ) == 15 -- Invalid bitrate
+		or c < 16 -- bitread ( c , 5 , 8 ) == 0 -- Not an invalid bitrate, but still impossible to use
 		or ( c % 16 >= 12 ) --bitread ( c , 3 , 4 ) == 3 -- Invalid Sampling rate
 		then return false 
 	else return true end
@@ -188,7 +190,7 @@ function info ( item )
 	end
 	
 	-- Figure out from path
-	if not item.tagtype then -- If you get to here, there is probably no tag....
+	if not item.tagtype and config and config.tagpatterns and config.tagpatterns.default then -- If you get to here, there is probably no tag....
 		item.tagtype = "pathderived"
 		item.tags = fileinfo.tagfrompath.info ( item.path , config.tagpatterns.default )
 		item.extra = { }
@@ -207,8 +209,10 @@ function info ( item )
 	while true do
 		local a , b , c , d
 		local strangebps = 0
-		repeat
+		local found = false
+		while not found do while not found do
 			firstframeoffset , a , b , c , d = findframesync ( fd )
+			fd:seek ( "cur" , 1 )
 			if not firstframeoffset then -- No frames found in file
 				return false
 			end
@@ -230,8 +234,8 @@ function info ( item )
 			padded = bitread ( c , 2 )
 			framelength = getframelength ( layer , samplerate , spf , bps , padded )
 			padded = ( padded == 1 )
-			local found = true
-		until found
+			found = true
+		end end
 		
 		-- Check we haven't found a false sync by looking if theres a frame where there should be...
 		fd:seek ( "set" , firstframeoffset + framelength )
@@ -307,42 +311,53 @@ function info ( item )
 	elseif item.tags.length then
 		length = item.tags.length [ 1 ]
 	end
-	--if not length then
-	if extra.CBR and type ( bps ) == "number" then
-		length = guesslength
-	elseif samplerate and spf and bps then
-		-- Lets go frame finding!
-		local runningbitrate = bps
-		fd:seek ( "set" , firstframeoffset + framelength )
-		
-		local oldframeoffset
-		local newframeoffset = firstframeoffset
-		while true do
-			oldframeoffset = newframeoffset
-			local frameoffset , a , b , c , d = findframesync ( fd )
-			if not frameoffset then break end
-			newframeoffset = frameoffset
+	-- Try and figure out if file is CBR:
+	if extra.CBR == nil and not quick then
+		local testpositions = { 0.2 , 0.7 }
+		for i , v in ipairs ( testpositions ) do
+			fd:seek ( "set" , firstframeoffset + bytes * v )
+			
+			local offset , a , b , c , d = findframesync ( fd )
+			if not offset then break end
 			
 			local newbitrate = getbitrate ( c , version , layer )
-			if newbitrate ~= bps then extra.CBR = false end
+			if newbitrate ~= bps then -- Is VBR
+				extra.CBR = false
+				break
+			end
 			
-			framecounter = framecounter + 1
-			runningbitrate = runningbitrate + newbitrate
-			
-			local padded = bitread ( c , 2 )
-			fd:seek ( "set" , frameoffset + getframelength ( layer , samplerate , spf , newbitrate , padded ) )
+			-- Assume CBR
+			extra.CBR = true
 		end
-		
-		length = framecounter * spf / samplerate
-		bps = runningbitrate / framecounter
-		local ratio = length/guesslength - 1
-		print(framecounter,length,bps,guesslength)
-		if math.abs ( ratio ) > 0.001 then print ( length , guesslength ) end
-		--print(framecounter , length, guesslength , length/guesslength - 1 ,bps,version,layer)
-	else -- No idea, can't figure out length?
-		length = 0
 	end
-	print(length)
+	if not length then
+		if extra.CBR or quick then
+			length = guesslength
+		elseif samplerate and spf and bps then
+			-- Lets go frame finding!
+			local runningbitrate = bps
+			fd:seek ( "set" , firstframeoffset + framelength )
+			
+			while true do
+				local frameoffset , a , b , c , d = findframesync ( fd )
+				if not frameoffset then break end
+				
+				local newbitrate = getbitrate ( c , version , layer )
+				if newbitrate ~= bps then extra.CBR = false end
+				
+				framecounter = framecounter + 1
+				runningbitrate = runningbitrate + newbitrate
+				
+				local padded = bitread ( c , 2 )
+				fd:seek ( "set" , frameoffset + getframelength ( layer , samplerate , spf , newbitrate , padded ) )
+			end
+			
+			length = framecounter * spf / samplerate
+			bps = runningbitrate / framecounter
+		else -- No idea, can't figure out length?
+			length = 0
+		end
+	end
 	extra.mpegversion = version
 	extra.layer = layer
 	extra.crcprotected = crc

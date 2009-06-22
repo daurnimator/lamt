@@ -32,7 +32,7 @@ function info ( item )
 		end
 	end
 	-- Figure out from path
-	if not item.tagtype then -- If you get to here, there is probably no tag....
+	if not item.tagtype and config and config.tagpatterns and config.tagpatterns.default then -- If you get to here, there is probably no tag....
 		item.tagtype = "pathderived"
 		item.tags = fileinfo.tagfrompath.info ( item.path , config.tagpatterns.default )
 		item.extra = { }
