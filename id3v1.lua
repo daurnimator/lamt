@@ -30,8 +30,9 @@ local speedindex = {
 	[4] = "hardcore"
 }
 
-local function readstring ( fd , length )
-	local str = string.gsub ( fd:read ( length ) , "[%s ]*$" , "" )
+local function readstring ( str )
+	str = str:gsub ( "[%s%z]*$" , "" )
+	if #str == 0 then return nil end
 	return fromid3:iconv ( str )
 end
 
@@ -50,23 +51,24 @@ function info ( fd , offset )
 	
 	if fd:read ( 3 ) ==  "TAG" then 
 		tags = { }
-		tags.title = { readstring ( fd , 30 ) } 
-		tags.artist = { readstring ( fd , 30 ) } 
-		tags.album = { readstring ( fd , 30 ) } 
-		tags.date = { readstring ( fd , 4 ) }
+		tags.title = { readstring ( fd:read( 30 ) ) } 
+		tags.artist = { readstring ( fd:read ( 30 ) ) } 
+		tags.album = { readstring ( fd:read ( 30 ) ) } 
+		tags.date = { readstring ( fd:read ( 4 ) ) }
 		
 		do -- ID3v1 vs ID3v1.1
-			local zerobyte = fd:seek ( "cur" , 28 )
-			if fd:read ( 1 ) == "\0" then -- Check if comment is 28 or 30 characters
+			local a = fd:read ( 28 )
+			local b = fd:read ( 1 )
+			if b == "\0" then -- Check if comment is 28 or 30 characters
 				-- Get up to 28 character comment
 				fd:seek ( "cur" , -29 )
-				tags.comment = { readstring ( fd , 28 ) }
+				tags.comment = { readstring ( a , 28 ) }
 				
 				-- Get track number
-				tags.tracknumber = { string.byte( fd:read ( 1 ) ) }
+				local track = string.byte ( fd:read ( 1 ) )
+				if track ~= 0 then tags.tracknumber = { track } end
 			else -- Is ID3v1, could have a 30 character comment tag
-				fd:seek ( "cur" , -29 )
-				tags.comment = { readstring ( fd , 30 ) } 
+				tags.comment = { readstring ( a .. b .. fd:read ( 1 ) ) } 
 			end
 		end
 		
@@ -75,17 +77,17 @@ function info ( fd , offset )
 		-- Check for extended tags (Note: these are damn rare, worthwhile supporting them??)
 		fd:seek ( "end" , -355 )
 		if fd:read ( 4 ) == "TAG+" then
-			tags.title [ 1 ] = tags.title[1] .. readstring ( fd , 60 )
-			tags.artist [ 1 ] = tags.artist[1] .. readstring ( fd , 60 )
-			tags.album [ 1 ] = tags.album[1] .. readstring ( fd , 60 )
+			tags.title [ 1 ] = tags.title[1] .. readstring ( fd:read ( 60 ) )
+			tags.artist [ 1 ] = tags.artist[1] .. readstring ( fd:read ( 60 ) )
+			tags.album [ 1 ] = tags.album[1] .. readstring ( fd:read ( 60 ) )
 			tags.speed = { speedindex [ tonumber ( string.byte ( fd:read ( 1 ) ) ) ] }
-			tags.genre [ 2 ] = readstring ( fd , 30 )
+			tags.genre [ 2 ] = readstring ( fd:read ( 30 ) )
 			do
-				local start = readstring ( fd , 30 )
+				local start = readstring ( fd:read ( 30 ) )
 				if #start == 6 and start:sub ( 4 , 4 ) == ":" then
 					tags["start-time"] = { tostring ( tonumber ( start:sub ( 1 , 3 ) ) * 60 + start:sub ( 5 , 6 ) ) }
 				end
-				local fin = readstring ( fd , 30 )
+				local fin = readstring ( fd:read ( 30 ) )
 				if #fin == 6 and fin:sub ( 4 , 4 ) == ":" then
 					tags["end-time"] = { tostring ( tonumber ( fin:sub ( 1 , 3 ) ) * 60 + fin:sub ( 5 , 6 ) ) }
 				end
@@ -165,8 +167,12 @@ function generatetag ( tags )
 	year = makestring ( ( guessyear ( year [ 1 ] ) or "" ) , 4 )
 	
 	-- Comment
+	if tags.comment and #tags.comment [ 1 ] <= 28 then
+		comment = tags.comment [ 1 ]
+	else
+		comment = ""
+	end
 	-- No one likes 28 character comments
-	comment = ""
 	comment = makestring ( comment , 28 )
 
 	-- Track
@@ -179,12 +185,13 @@ function generatetag ( tags )
 	-- Genre
 	if type( tags.genre ) == "table" then 
 		genre = toid3:iconv ( tags.genre [ 1 ] )
-	else genre = ""
+	else 
+		genre = ""
 	end
 	do
-		local t = 12
+		local t = 12 -- "Other"
 		for i , v in ipairs ( genreindex ) do
-			if string.find ( string.lower ( genre ) , string.gsub ( string.lower ( v ) , "%W" , "%W" ) ) then genre = i break end 
+			if string.find ( genre:lower ( ) , string.gsub ( v:lower ( ) , "%W" , "." ) ) then t = i break end 
 		end
 		genre = string.char ( t )
 	end

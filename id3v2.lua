@@ -384,6 +384,13 @@ local function readtextframe ( str )
 	return r
 end
 
+local ignoreframes = { -- Ignore these frames
+	["NCON"] = true ; -- MusicMatch adds stuff in an unknown format in the NCON frame. These can get quite large.
+	["TCMP"] = true ; -- Itunes: When you check the "Part of a compilation" checkbox on the Info tab of the tag editor form, iTunes will add a non-standard TCMP frame to the tag.
+	["TBPM"] = true ; -- Mixmeister BPM analyzer (among others it seems) writes floating point values to the TBPM (Beats Per Minute) frame.
+	["CM1"] = true ; -- Tag that seems to pop its head in randomly
+}
+
 local framedecode = {
 	["UFID"] = function ( str )
 			local t = vstruct.unpack ( "> ownerid:z uniquefileid:s64" , str )
@@ -606,7 +613,7 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name ):lower ( )
+		local field = ascii ( str:sub ( 2 , e - 1 ) , encodings [ encoding ].name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
 		local st = string.explode ( text , terminator , true )
@@ -649,7 +656,7 @@ local framedecode = {
 		local encoding = string.byte ( str:sub ( 1 , 1 ) )
 		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , e ) , encodings [ encoding ].name )
+		local field = ascii ( str:sub ( 2 , e - 1 ) , encodings [ encoding ].name )
 		local url = str:sub ( e + 1 )
 		
 		if #field == 0 or not string.find ( field , "%w" )  then 
@@ -1016,7 +1023,8 @@ function info ( fd , location , header )
 			sd:seek ( "set" , ok.startcontent )
 			local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 			if frame then
-				if framedecode [ ok.id ] then
+				if ignoreframes [ ok.id ] then
+				elseif framedecode [ ok.id ] then
 					--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
 					table.inherit ( tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
 				else -- We don't know of this frame type
