@@ -11,6 +11,9 @@
 
 require "general"
 
+local strbyte = string.byte
+local floor = math.floor
+
 module ( "lomp.fileinfo.mpeg" , package.see ( lomp ) )
 
 require "modules.fileinfo.APE"
@@ -18,17 +21,11 @@ require "modules.fileinfo.id3v2"
 require "modules.fileinfo.id3v1"
 require "modules.fileinfo.tagfrompath"
 
-local magicpattern = "\255[\224-\254]"
+local magicpattern = "\255[\226-\231\242-\247\250-\255].."
 
-local function bitread ( b , pos )
-	return math.floor ( ( b % ( 2^pos ) ) / 2^(pos-1) )
-end
-local function bitnum ( b , from , to )
-	local sum = 0
-	for i = to , from , -1 do
-		sum = sum*2 + bitread ( b , i )
-	end
-	return sum
+local function bitread ( b , from , to )
+	to = to or from
+	return floor ( ( b % ( 2^to ) ) / 2^( from -1) )
 end
 
 local mpegversion = {
@@ -46,7 +43,7 @@ local tolayer = {
 local bitrate = {
 	[0] = { } ,
 	[1] = { 32000 , 	32000 , 	32000 , 	32000 , 	8000 } ,
-	[2] = { 64000 ,	48000 , 	40000 , 	48000 , 	16000 } ,
+	[2] = { 64000 , 	48000 , 	40000 , 	48000 , 	16000 } ,
 	[3] = { 96000 , 	56000 , 	48000 , 	56000 , 	24000 } ,
 	[4] = { 128000 , 	64000 , 	56000 , 	64000 , 	32000 } ,
 	[5] = { 160000 , 	80000 , 	64000 , 	80000 , 	40000 } ,
@@ -59,19 +56,18 @@ local bitrate = {
 	[12] = { 384000 , 	256000 , 	224000 , 	192000 , 	128000 } ,
 	[13] = { 416000 , 	320000 , 	256000 , 	224000 , 	144000 } ,
 	[14] = { 448000 , 	384000 , 	320000 , 	256000 , 	160000 } ,
-	[15] = { false , false , false , false }
+	[15] = { false , 	false , 	false , 	false , 	false }
 }
 local function getbitrate ( c , version ,layer )
-	local bps = bitnum ( c , 5 , 8 )
+	local bps = bitread ( c , 5 , 8 )
 	if version == 1 then
 		return bitrate [ bps ] [ layer ]
-	elseif version == 2 then
+	elseif version == 2 or version == 2.5 then
 		if layer == 1 then
 			return bitrate [ bps ] [ 4 ]
 		elseif layer == 2 or layer == 3 then
 			return bitrate [ bps ] [ 5 ]
 		end
-	--else -- MPEG 2.5
 	end
 end
 local samplerates = {
@@ -102,18 +98,42 @@ local lensideinfo = { -- [mpegversion][channels] (bytes)
 	[2.5] = { 9 , 17 }
 }
 
-local function findinfile ( fd , pattern , callback )
+function validframe ( a , b , c , d )
+	if a ~= 255 or b < 224 
+		or bitread ( b , 4 , 5 ) == 1 -- Invalid Mpeg Version
+		or b % 8 < 2 -- bitread ( b , 2 , 3 ) == 0 -- Invalid Layer
+		or c >= 240 --bitread ( c , 5 , 8 ) == 15 -- Invalid bitrate
+		or ( c % 16 >= 12 ) --bitread ( c , 3 , 4 ) == 3 -- Invalid Sampling rate
+		then return false 
+	else return true end
+end
+
+function getframelength ( layer , samplerate , spf , bitrate , padded )
+	if layer == 1 then
+		return ( floor ( 12 * bitrate / samplerate ) + padded ) * 4
+	else
+		return floor ( spf / 8 * bitrate / samplerate ) + padded
+	end
+end
+
+function findframesync ( fd )
 	local step = 2048
-	local new = fd:read ( #pattern )
-	local old = ""
-	while new do
-		local s , e = ( old .. new ):find ( pattern )
-		if s then
-			local offset = fd:seek ( "cur" , s - #new + #old - 1 )
-			if callback ( fd , offset ) then return true end
+	local a , b , c , d
+	local str = fd:read ( 4 )
+	if not str then return false end -- EOF
+	local t = { -1 , -1 , strbyte ( str , 1 , 4 ) } -- Check for frame at current offset first
+	
+	local i = 3
+	while true do
+		if not t [ i + 3 ] then
+			i = 1
+			str = fd:read ( step )
+			if not str then return false end -- EOF
+			t = { b , c , strbyte ( str , 1 , #str ) }
 		end
-		local old = new:sub ( - #pattern + 1 )
-		new = fd:read ( step )
+		a , b , c , d =  unpack ( t , i , i + 3 )
+		if validframe ( a , b , c , d ) then return fd:seek ( "cur" , - #str + i - 3 ) , a , b , c , d end
+		i = i + 1
 	end
 	return false
 end
@@ -177,81 +197,76 @@ function info ( item )
 	extra = item.extra
 	local filesize = fd:seek ( "end" )
 	fd:seek ( "set" , tagatsof )
-	
+
 	-- Find first frame header
-	local firstframeoffset , framelength
 	local framecounter = 0
-	
+	local firstframeoffset , framelength
 	local version , layer , bps , samplerate , padded , spf
 	local crc , private , channelmode , channels , copyright , original , emph
 	
-	local strangebps = 0
-	
-	findinfile ( fd , magicpattern , function ( fd , offset )
-		firstframeoffset = offset
-		
-		local str = fd:read ( 4 )
-		if not str then return false end
-		local a , b , c , d = string.byte ( str , 1 , 4 )
-
-		version = mpegversion [ bitnum ( b , 4 , 5 ) ]
-		layer = tolayer [ bitnum ( b , 2 , 3 ) ]
-		if version == false or layer == false then return false end
-		spf = samplesperframe [ version ] [ layer ]
-		bps = getbitrate ( c , version , layer )
-		samplerate = samplerates [ version ] [ bitnum ( c , 3 , 4 ) ]
-		if bps == false or samplerate == false then return false end
-		if bps == nil then
-			if strangebps < 5 then -- Probably a bad frame, try again
-				strangebps = strangebps + 1
+	while true do
+		local a , b , c , d
+		local strangebps = 0
+		repeat
+			firstframeoffset , a , b , c , d = findframesync ( fd )
+			if not firstframeoffset then -- No frames found in file
 				return false
-			else -- Well, hows that: a frame with no bitrate.... WTF DO WE DO NOW
-				framecounter = framecounter + strangebps
 			end
-		end
-		padded = bitread ( c , 2 )
+			
+			version = mpegversion [ bitread ( b , 4 , 5 ) ]
+			layer = tolayer [ bitread ( b , 2 , 3 ) ]
+			spf = samplesperframe [ version ] [ layer ]
+			bps = getbitrate ( c , version , layer )
+			samplerate = samplerates [ version ] [ bitread ( c , 3 , 4 ) ]
+			if bps == nil then
+				if strangebps < 10 then -- Probably a bad frame, try again
+					strangebps = strangebps + 1
+					break
+				else -- Well, hows that: a frame with no known bitrate.... WTF DO WE DO NOW
+					extra.CBR = true -- Least we know its going to be CBR
+					framecounter = framecounter + strangebps
+				end
+			end
+			padded = bitread ( c , 2 )
+			framelength = getframelength ( layer , samplerate , spf , bps , padded )
+			padded = ( padded == 1 )
+			local found = true
+		until found
 		
-		if layer == 1 then
-			framelength = ( math.floor ( 12 * bps / samplerate ) + padded ) * 4
-		else
-			framelength = math.floor ( spf / 8 * bps / samplerate ) + padded
-		end
-		padded = ( padded == 1 )
-		
-		fd:seek ( "cur" , framelength - 4 )
-		local x , y = string.byte ( fd:read ( 4 ) , 1 ,4 )
-		if x == 255 and y >= 224 then
+		-- Check we haven't found a false sync by looking if theres a frame where there should be...
+		fd:seek ( "set" , firstframeoffset + framelength )
+		if validframe ( strbyte ( fd:read ( 4 ) , 1 ,4 ) ) then
 			framecounter = framecounter + 1
 			crc = bitread ( b , 1 ) == 0
 			private = bitread ( c , 1 ) == 1
-			channelmode = bitnum ( d , 7 , 8 )
+			channelmode = bitread ( d , 7 , 8 )
 			if channelmode == 3 then
 				channels = 1 
 			elseif channelmode == 1 then
 				channels = 2
-				extra.modeextension = bitnum ( d , 5 , 6 )
+				extra.modeextension = bitread ( d , 5 , 6 )
 			else
 				channels = 2
 			end
 			copyright = bitread ( d , 5 ) == 1
 			original = bitread ( d , 6 ) == 1
-			emph = bitnum ( d , 1 , 2 )
-			return true
+			emph = bitread ( d , 1 , 2 )
+			break
 		else
 			fd:seek ( "set" , firstframeoffset + 1 )
 		end
-	end )
+	end
 	
 	local length , frames , bytes , quality
 	
 	-- Look for XING header
-	fd:seek ( "cur" , lensideinfo [ version ] [ channels ] 	)
+	fd:seek ( "cur" , lensideinfo [ version ] [ channels ] )
 	local h = fd:read ( 4 )
 	if h == "Xing" or h == "Info" then
 		local flags = fd:read ( 4 )
-		local f = string.byte ( flags , 4 )
+		local f = strbyte ( flags , 4 )
 		if bitread ( f , 2 ) == 1 then -- Bytes field
-			local t = { string.byte ( fd:read ( 4 ) , 1 , 4 ) }
+			local t = { strbyte ( fd:read ( 4 ) , 1 , 4 ) }
 			local sum = 0
 			for i , v in ipairs ( t ) do
 				sum = sum * 256 + v
@@ -259,7 +274,7 @@ function info ( item )
 			bytes = sum
 		end
 		if bitread ( f , 1 ) == 1 then -- Frames field
-			local t = { string.byte ( fd:read ( 4 ) , 1 , 4 ) }
+			local t = { strbyte ( fd:read ( 4 ) , 1 , 4 ) }
 			local sum = 0
 			for i , v in ipairs ( t ) do
 				sum = sum * 256 + v
@@ -270,7 +285,7 @@ function info ( item )
 			fd:read ( 100 )
 		end
 		if bitread ( f , 4 ) == 1 then -- Quality field
-			local t = { string.byte ( fd:read ( 4 ) , 1 , 4 ) }
+			local t = { strbyte ( fd:read ( 4 ) , 1 , 4 ) }
 			local sum = 0
 			for i , v in ipairs ( t ) do
 				sum = sum * 256 + v
@@ -291,44 +306,43 @@ function info ( item )
 		end
 	elseif item.tags.length then
 		length = item.tags.length [ 1 ]
-	elseif extra.CBR ~= false and type ( bps ) == "number" then
+	end
+	--if not length then
+	if extra.CBR and type ( bps ) == "number" then
 		length = guesslength
 	elseif samplerate and spf and bps then
 		-- Lets go frame finding!
-		local framecounter , runningbitrate = 1 , bps
+		local runningbitrate = bps
 		fd:seek ( "set" , firstframeoffset + framelength )
-
-		local a , b , c , d 
-		findinfile ( fd , magicpattern , function ( fd , offset )
-			local str = fd:read ( 4 )
-			if not str then return false end
-			a , b , c , d = string.byte ( str , 1 , 4 )
+		
+		local oldframeoffset
+		local newframeoffset = firstframeoffset
+		while true do
+			oldframeoffset = newframeoffset
+			local frameoffset , a , b , c , d = findframesync ( fd )
+			if not frameoffset then break end
+			newframeoffset = frameoffset
 			
 			local newbitrate = getbitrate ( c , version , layer )
 			if newbitrate ~= bps then extra.CBR = false end
-			if not newbitrate then return false end
 			
-			local padded = bitread ( c , 2 )
-			if layer == 1 then
-				framelength = ( math.floor ( 12 * newbitrate / samplerate ) + padded ) * 4
-			else
-				framelength = math.floor ( spf / 8 * newbitrate / samplerate ) + padded
-			end
 			framecounter = framecounter + 1
 			runningbitrate = runningbitrate + newbitrate
-			fd:seek ( "cur" , framelength - 4 )	
-		end )
-
+			
+			local padded = bitread ( c , 2 )
+			fd:seek ( "set" , frameoffset + getframelength ( layer , samplerate , spf , newbitrate , padded ) )
+		end
+		
 		length = framecounter * spf / samplerate
 		bps = runningbitrate / framecounter
 		local ratio = length/guesslength - 1
+		print(framecounter,length,bps,guesslength)
 		if math.abs ( ratio ) > 0.001 then print ( length , guesslength ) end
 		--print(framecounter , length, guesslength , length/guesslength - 1 ,bps,version,layer)
-
 	else -- No idea, can't figure out length?
 		length = 0
 	end
-	
+	print(length)
 	extra.mpegversion = version
 	extra.layer = layer
 	extra.crcprotected = crc
