@@ -12,6 +12,7 @@
 module ( "lomp.fileinfo.tagfrompath" , package.see ( lomp ) )
 
 function info ( path , format , donotescapepattern )
+	if not format then return false end
 	local subs = {
 		["album artist"] = "([^/]+)" ,
 		["artist"] = "([^/]+)" ,

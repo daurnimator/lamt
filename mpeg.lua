@@ -142,6 +142,7 @@ end
 
 function info ( item )
 	local fd = io.open ( item.path , "rb" )
+	if not fd then return false end
 	item = item or { }
 	
 	local tagatsof = 0 -- Bytes that tags use at start of file
@@ -305,6 +306,7 @@ function info ( item )
 		length = frames * spf / samplerate
 		bps = bytes*8/(length)
 		print("XING" , guesslength , length )
+		error()
 		if guesslength*1.01 > length or guesslength*.99 < length then -- If guessed length isn't within 1% of actual length, isn't CBR
 			extra.CBR = false
 		end
@@ -314,14 +316,32 @@ function info ( item )
 	-- Try and figure out if file is CBR:
 	if extra.CBR == nil and not quick then
 		local testpositions = { 0.2 , 0.7 }
+		-- Look at certain percentages of the way through the file:
+		-- If they have a different bitrates, file must be VBR
 		for i , v in ipairs ( testpositions ) do
 			fd:seek ( "set" , firstframeoffset + bytes * v )
 			
-			local offset , a , b , c , d = findframesync ( fd )
-			if not offset then break end
+			local newbitrate , newerbitrate
+			while true do
+				local offset , a , b , c , d = findframesync ( fd )
+				if not offset then break end
+				
+				newbitrate = getbitrate ( c , version , layer )
+				local padded= bitread ( c , 2 )
+				
+				-- Check we haven't found a false sync by looking if theres a frame where the next one should be...
+				fd:seek ( "set" , offset + getframelength ( layer , samplerate , spf , newbitrate , padded ) )
+				
+				local w , x , y , z = strbyte ( fd:read ( 4 ) , 1 ,4 )
+				if validframe ( w , x , y , z ) then
+					newerbitrate  = getbitrate ( y , version , layer )
+					break
+				else
+					fd:seek ( "set" , offset + 1 )
+				end
+			end
 			
-			local newbitrate = getbitrate ( c , version , layer )
-			if newbitrate ~= bps then -- Is VBR
+			if newbitrate ~= bps and newerbitrate ~= bps then -- Is VBR
 				extra.CBR = false
 				break
 			end
@@ -352,6 +372,7 @@ function info ( item )
 				fd:seek ( "set" , frameoffset + getframelength ( layer , samplerate , spf , newbitrate , padded ) )
 			end
 			
+			extra.frames = framecounter
 			length = framecounter * spf / samplerate
 			bps = runningbitrate / framecounter
 		else -- No idea, can't figure out length?
@@ -406,4 +427,4 @@ function edit ( item , edits , inherit )
 	end
 end
 
-return { { "mp3" , "mp2" , "mpg" , "mpeg" } , info , edit }
+return { { "mp3" , "mp2" , "mpg" , "mpeg" , "mpa" , "mp1" } , info , edit }
