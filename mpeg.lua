@@ -123,15 +123,15 @@ function findframesync ( fd )
 	local a , b , c , d
 	local str = fd:read ( 4 )
 	if not str then return false end -- EOF
-	local t = { -1 , -1 , strbyte ( str , 1 , 4 ) } -- Check for frame at current offset first
+	local t = { nil , nil , strbyte ( str , 1 , 4 ) } -- Check for frame at current offset first
 	
 	local i = 3
 	while true do
 		if not t [ i + 3 ] then
-			i = 1
 			str = fd:read ( step )
 			if not str then return false end -- EOF
 			t = { b , c , strbyte ( str , 1 , #str ) }
+			i = 1
 		end
 		a , b , c , d =  unpack ( t , i , i + 3 )
 		if validframe ( a , b , c , d ) then return fd:seek ( "cur" , - #str + i - 3 ) , a , b , c , d end

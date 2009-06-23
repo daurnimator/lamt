@@ -11,15 +11,31 @@
 
 require "general"
 
+local strbyte = string.byte
+local strchar = string.char
+
 module ( "lomp.fileinfo.wavpack" , package.see ( lomp ) )
+
+--http://www.wavpack.com/file_format.txt
 
 require "vstruct"
 
 require "modules.fileinfo.APE"
 require "modules.fileinfo.tagfrompath"
 
-local sample_rates = { 6000 , 8000 , 9600 , 11025 , 12000 , 16000 , 22050 , 24000 , 32000 , 44100 , 48000 , 64000 , 88200 , 9600 }
+local sample_rates = {	6000 , 	8000 , 	9600 , 	11025 , 	12000 , 	16000 , 	22050 , 	24000 , 	32000 , 	44100 ,	48000 , 	64000 , 	88200 , 	96000 , 	192000 }
 
+function intflags ( flags , i , j )
+	j = j or i
+	local result = 0
+	while j >= i do
+		result = result * 2
+		if flags [ j ] then result = result + 1 end
+		j = j - 1
+	end
+	return result
+end
+	
 function info ( item )
 	local fd = io.open ( item.path , "rb" )
 	-- APE
@@ -39,37 +55,47 @@ function info ( item )
 	end
 	
 	fd:seek ( "set" )
-	local new = fd:read ( 4 )
-	local old = ""
-	while new do
-		local s , e = ( old .. new ):find ( "wvpk" )
-		if s then
-			fd:seek ( "cur" , e - #new + #old )
+	
+	local step = 2048
+	local str = fd:read ( 4 )
+	if not str then return false end -- EOF
+	local t = { nil , nil , strbyte ( str , 1 , 4 ) } -- Check at current offset first
+	
+	local i = 3
+	while true do
+		if not t [ i + 3 ] then
+			str = fd:read ( step )
+			if not str then return false end -- EOF
+			t = { t [ i + 1 ] , t [ i + 2 ] , strbyte ( str , 1 , #str ) }
+			i = 1
+		end
+		if strchar ( unpack ( t , i , i + 3 ) ) == "wvpk" then 
+			fd:seek ( "cur" , - #str + i + 1 ) 
 			break
 		end
-		local old = new:sub ( -3 , -1 )
-		new = fd:read ( 2048 )
+		i = i + 1
 	end
 	
 	local t = vstruct.unpack ( "< size:u4 version:u2 track_no:u1 index_no:u1 total_samples:u4 block_index:u4 block_samples:u4 flags:m4 crc:u4" , fd )
-	
+
 	item.extra = {
 		version = version ;
 		totalsamples = t.total_samples ;
-		bitspersample = ( vstruct.implode ( { unpack ( t.flags , 1 , 2 ) } ) + 1 ) * 8 ;
+		bitspersample = ( intflags ( t.flags , 1 , 2 ) + 1 ) * 8 ;
 		stereo = not t.flags [ 3 ] ;
 		hybrid = t.flags [ 4 ] ;
 		jointstereo = t.flags [ 5 ] ;
 		independantchanels = not t.flags [ 6 ] ;
-		floatingpoint = t.flags [ 8 ] ;
-		sampleratecode = vstruct.implode ( { unpack ( t.flags , 23 , 26 ) } ) + 1 ; -- Incorrect...
+		floatingpoint = t.flags [ 7 ] ;
+		sampleratecode = intflags ( t.flags , 24 , 27 ) + 1 ;
 	}
+
 	if sampleratecode ~= 16 then
-		item.exta.samplerate = sample_rates [ item.extra.sampleratecode ] ;
+		item.extra.samplerate = sample_rates [ item.extra.sampleratecode ] ;
 	else
 		-- TODO: metadata sub blocks
 	end
-	print(item.extra.sampleratecode , sample_rates [ item.extra.sampleratecode ] , unpack ( t.flags , 23 , 26 ) )
+	
 	if item.extra.hybrid then
 		item.extra.hybridnoiseshaping = t.flags [ 7 ]
 		item.extra.hybridparamscontrolbitrate = t.flags [ 10 ]
