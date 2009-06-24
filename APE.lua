@@ -18,6 +18,14 @@ require "vstruct"
 require "iconv"
 
 _NAME = "APEv1 and APEv2 tag reader/writer"
+-- Specifications:
+ -- http://wiki.hydrogenaudio.org/index.php?title=APEv2
+ -- http://wiki.hydrogenaudio.org/index.php?title=APEv2_specification
+ -- http://wiki.hydrogenaudio.org/index.php?title=APE_Tags_Header
+ -- http://wiki.hydrogenaudio.org/index.php?title=APE_Tag_Item
+ -- http://wiki.hydrogenaudio.org/index.php?title=APE_key
+ -- http://wiki.hydrogenaudio.org/index.php?title=APE_Item_Value
+ -- http://wiki.hydrogenaudio.org/index.php?title=Ape_Tags_Flags
 
 local contenttypes = {
 	[ 0 ] = "UTF-8" ,

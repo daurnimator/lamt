@@ -11,6 +11,15 @@
 
 require "general"
 
+local strfind = string.find
+local strsub = string.sub
+local strmatch = string.match
+local strchar = string.char
+local strrep = string.rep
+local strexplode = string.explode
+local strbyte = string.byte
+local strlower= string.lower
+
 module ( "lomp.fileinfo.id3v2" , package.see ( lomp ) )
 
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
@@ -85,7 +94,7 @@ local function readheader ( fd )
 				local contents = fd:read ( desafesync ( safesyncsize ) - 4 )
 				t.e = { }
 				t.e.numflags = vstruct.unpack ( "> u1" , contents )
-				t.e.flags = vstruct.unpack ( "> " .. t.e.numflags .. " * m4" , string.sub ( contents , 2 ) )
+				t.e.flags = vstruct.unpack ( "> " .. t.e.numflags .. " * m4" , strsub ( contents , 2 ) )
 				for i , v in ipairs ( t.e.flags ) do
 					v.tagisupdate = v [ 7 ]
 					v.hascrc = v [ 6 ]
@@ -96,7 +105,7 @@ local function readheader ( fd )
 				t.e = vstruct.unpack ( "> flags:{ m4 m4 } sizeofpadding:u4" , contents )
 				t.e.hascrc = t.e.flags[1][8]
 				if t.e.hascrc then -- Has CRC
-					t.e.crc = string.sub ( contents , 13 , 17 )
+					t.e.crc = strsub ( contents , 13 , 17 )
 				end
 			else
 				fd:seek ( "cur" , -4 )
@@ -123,29 +132,29 @@ local function interpretdatestamp ( str )
 	str = str:trim ( )
 	
 	local tbl = { }
-	local d , t = unpack ( string.explode ( str , "T" ) )
-	local s , e , y = string.find ( d , "^%s*(%d%d%d%d)%f[^%d]" )
+	local d , t = unpack ( strexplode ( str , "T" ) )
+	local s , e , y = strfind ( d , "^%s*(%d%d%d%d)%f[^%d]" )
 	if y then
 		tbl.year = y
-		d = string.sub ( d , e + 1 ):gsub( "^%s*(.-)%s*$", "%1" )
+		d = strsub ( d , e + 1 ):gsub( "^%s*(.-)%s*$", "%1" )
 	end
-	local s , e , month , day = string.find ( d , "^%s*(%d%d)%s*[/- ]%s*(%d%d)"  )
+	local s , e , month , day = strfind ( d , "^%s*(%d%d)%s*[/- ]%s*(%d%d)"  )
 	if s then
 		tbl.month = twodigit ( month )
 		tbl.day = twodigit ( day )
-		d = string.sub ( d , e + 1 ):gsub( "^%s*(.-)%s*$", "%1" ) -- Cut off month/date then remove any surrounding whitespace
+		d = strsub ( d , e + 1 ):gsub( "^%s*(.-)%s*$", "%1" ) -- Cut off month/date then remove any surrounding whitespace
 	end
 	if t and #t > 0 then
 		tbl.time = t:gsub( "^%s*(.-)%s*$", "%1" )
-	elseif string.match ( d , ":" ) then -- Has a colon in it (probably a time)
+	elseif strmatch ( d , ":" ) then -- Has a colon in it (probably a time)
 		-- t = HH:mm:ss of subset there-of
 		tbl.time = d
 		d = ""
 	end
 	if tbl.time then
-		tbl.hour = twodigit ( string.match ( tbl.time , "^[^%d](%d?%d):" ) or string.match ( tbl.time , "^[^%d](%d?%d)$" ) )
-		tbl.minute = twodigit ( string.match ( tbl.time , ":(%d?%d):" ) or string.match ( tbl.time , "^[^:]:(%d?%d)$" ) )
-		tbl.second = twodigit ( string.match ( tbl.time , ":(%d?%d)[^%d]" ) or string.match ( tbl.time , ":(%d?%d)$" ) )
+		tbl.hour = twodigit ( strmatch ( tbl.time , "^[^%d](%d?%d):" ) or strmatch ( tbl.time , "^[^%d](%d?%d)$" ) )
+		tbl.minute = twodigit ( strmatch ( tbl.time , ":(%d?%d):" ) or strmatch ( tbl.time , "^[^:]:(%d?%d)$" ) )
+		tbl.second = twodigit ( strmatch ( tbl.time , ":(%d?%d)[^%d]" ) or strmatch ( tbl.time , ":(%d?%d)$" ) )
 	end
 	
 	tbl.left = d
@@ -320,7 +329,7 @@ local frameencode = {
 		local t = { }
 		for i , v in ipairs ( tags [ "comment" ] ) do
 			local shortdescription = ""--utf16 ( "Comment #" .. i ) -- UTF-16 string
-			t [ #t + 1 ] = string.char ( e ) .. language .. shortdescription .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v , "UTF-8" )
+			t [ #t + 1 ] = strchar ( e ) .. language .. shortdescription .. strrep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v , "UTF-8" )
 		end
 		local id = { false , "COM" , "COMM" , "COMM" }
 		return { { id [ id3version ] , t } } , false
@@ -349,7 +358,7 @@ local frameencode = {
 	[ "terms of use" ] = function ( tags , id3version )
 		local e = 1 -- Encoding, 1 is UTF-16
 		local language = "eng" -- 3 character language
-		local s = string.char ( e ) .. language .. utf16 ( tags [ "terms of use" ] [ 1 ] , "UTF-8")
+		local s = strchar ( e ) .. language .. utf16 ( tags [ "terms of use" ] [ 1 ] , "UTF-8")
 		
 		local id = { false , "TXX" , "USER" , "USER" }
 		return { id [ id3version ] , { s } } , toboolean ( v [ 2 ] )
@@ -370,10 +379,10 @@ local frameencode = {
 }
 
 local function readtextframe ( str )
-	local encoding = string.byte ( str:sub ( 1 , 1 ) )
+	local encoding = strbyte ( str:sub ( 1 , 1 ) )
 	local text = str:sub ( 2 )
-	local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
-	local st = string.explode ( text , terminator , true )
+	local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+	local st = strexplode ( text , terminator , true )
 	local r , index = { } , 0
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
@@ -417,7 +426,7 @@ local framedecode = {
 	["TRCK"] = function ( str ) -- Track number/Position in set
 			local track , total , totnexti = { } , { } , 1
 			for i , v in ipairs ( readtextframe ( str ) ) do
-				track [ #track + 1 ] , total [ totnexti ] = string.match ( v , "([^/]*)/?(.*)" )
+				track [ #track + 1 ] , total [ totnexti ] = strmatch ( v , "([^/]*)/?(.*)" )
 				if total [ totnexti ] and total [ totnexti ] == "" then total [ totnexti ] = nil else totnexti = totnexti + 1 end -- string match still fills in the total array
 			end
 			if not next ( total ) then total = nil end
@@ -426,7 +435,7 @@ local framedecode = {
 	["TPOS"] = function ( str ) -- Part of a set
 			local disc , total , totnexti = { } , { } , 1
 			for i , v in ipairs ( readtextframe ( str ) ) do
-				disc [ #disc + 1 ] , total [ totnexti ] = string.match ( v , "([^/]*)/?(.*)" )
+				disc [ #disc + 1 ] , total [ totnexti ] = strmatch ( v , "([^/]*)/?(.*)" )
 				if total [ totnexti ] and total [ totnexti ] == "" then total [ totnexti ] = nil else totnexti = totnexti + 1 end -- string match still fills in the total array
 			end
 			if not next ( total ) then total = nil end
@@ -537,7 +546,7 @@ local framedecode = {
 	["TCOP"] = function ( str ) -- Copyright message
 		local c , nexti = { } , 1
 		for i , v in ipairs ( readtextframe ( str ) ) do
-			local m = string.match ( v , "(%d%d%d%d)%s" )
+			local m = strmatch ( v , "(%d%d%d%d)%s" )
 			if m then 
 				c [ nexti ] = m
 				nexti = nexti + 1
@@ -548,7 +557,7 @@ local framedecode = {
 	["TPRO"] = function ( str ) -- Produced notice
 		local p , nexti = { } , 1
 		for i , v in ipairs ( readtextframe ( str ) ) do
-			local m = string.match ( v , "(%d%d%d%d)%s" )
+			local m = strmatch ( v , "(%d%d%d%d)%s" )
 			if m then 
 				p [ nexti ] = m
 				nexti = nexti + 1
@@ -610,13 +619,13 @@ local framedecode = {
 	end ,
 	-- Special case, TXXX
 	["TXXX"] = function ( str ) -- Custom text frame
-		local encoding = string.byte ( str:sub ( 1 , 1 ) )
-		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = strbyte ( str:sub ( 1 , 1 ) )
+		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
 		local field = ascii ( str:sub ( 2 , e - 1 ) , encodings [ encoding ].name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
-		local st = string.explode ( text , terminator , true )
+		local st = strexplode ( text , terminator , true )
 		
 		local r = { }
 		for i , v in ipairs ( st ) do
@@ -653,17 +662,17 @@ local framedecode = {
 		return { ["publisher url"] = { str } }
 	end ,
 	["WXXX"] = function ( str ) -- Custom
-		local encoding = string.byte ( str:sub ( 1 , 1 ) )
-		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = strbyte ( str:sub ( 1 , 1 ) )
+		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
 		local s , e = str:find ( terminator , 2 , true )
 		local field = ascii ( str:sub ( 2 , e - 1 ) , encodings [ encoding ].name )
 		local url = str:sub ( e + 1 )
 		
-		if #field == 0 or not string.find ( field , "%w" )  then 
+		if #field == 0 or not strfind ( field , "%w" )  then 
 			field = "url"
 		else 
-			field = string.lower ( field )
-			if not string.find ( field , "url$" ) then
+			field = strlower ( field )
+			if not strfind ( field , "url$" ) then
 				field = field .. " url"
 			end
 		end
@@ -687,8 +696,8 @@ local framedecode = {
 	
 	-- Unsynchronised lyrics/text transcription
 	["USLT"] = function ( str )
-		local encoding = string.byte ( str:sub ( 1 , 1 ) )
-		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = strbyte ( str:sub ( 1 , 1 ) )
+		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
 		local description = str:sub ( 5 , e )
@@ -703,8 +712,8 @@ local framedecode = {
 	
 	-- Comment
 	["COMM"] = function ( str )
-		local encoding = string.byte ( str:sub ( 1 , 1 ) )
-		local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = strbyte ( str:sub ( 1 , 1 ) )
+		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
 		local description = str:sub ( 5 , e )
@@ -749,8 +758,8 @@ local framedecode = {
 	end ,
 
 	["USER"] = function ( str ) -- Terms of use frame
-		local encoding = string.byte ( str:sub ( 1 , 1 ) )
-		local terminator = string.rep ( "\0" , encodings [ t.encoding ].nulls )
+		local encoding = strbyte ( str:sub ( 1 , 1 ) )
+		local terminator = strrep ( "\0" , encodings [ t.encoding ].nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
 		local description = str:sub ( 5 , e )
@@ -795,8 +804,8 @@ do -- ID3v2.3 frames (Older frames)
 	framedecode["TDAT"] = function ( str ) -- Date in DDMM form
 		local t = { }
 		for i , v in ipairs ( readtextframe ( str ) ) do
-			local day = twodigit ( string.sub ( v , 1 , 2 ) )
-			local month = twodigit ( string.sub ( v , 3 , 4 ) )
+			local day = twodigit ( strsub ( v , 1 , 2 ) )
+			local month = twodigit ( strsub ( v , 3 , 4 ) )
 			t [ #t + 1 ] = month .. "-" .. day
 		end
 		return { [ "date" ] = t }
@@ -1017,7 +1026,7 @@ function info ( fd , location , header )
 			:gsub ( "\255%z%z" ,  "\255\0" )
 	end
 	local sd = vstruct.cursor ( id3tag )
-	while sd:seek ( "cur" ) < ( header.size - header.frameheadersize ) do
+	while sd:seek ( "cur" ) < ( #id3tag - header.frameheadersize ) do
 		local ok , err = readframeheader ( sd , header )
 		if ok then
 			sd:seek ( "set" , ok.startcontent )
@@ -1049,14 +1058,14 @@ end
 local function genWXXXframe ( humanname , v , id3version )
 	local e = v.encoding or 1 -- Encoding, 1 is UTF-16
 	humanname = humanname:match ( "(.*)url" ) or humanname
-	local s = string.char ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. ascii ( v [ 1 ] or "" , "UTF-8" )
+	local s = strchar ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. strrep ( "\0" , encodings [ e ].nulls ) .. ascii ( v [ 1 ] or "" , "UTF-8" )
 	return { id = ( ( id3version == 2 ) and "WXX" ) or "WXXX" , contents = s } , ( toboolean ( v [ 2 ] ) )
 end
 local function genTXXXframe ( humanname , v , id3version )
 	local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-	local s = string.char ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ 1 ] , "UTF-8" )
+	local s = strchar ( e ) .. utf16 ( humanname , "ISO-8859-1" ) .. strrep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ 1 ] , "UTF-8" )
 	for i =2 , #v do
-		s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+		s = s .. strrep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
 	end
 	return { id = ( ( id3version == 2 ) and "TXX" ) or "TXXX" , contents = s }
 end
@@ -1065,18 +1074,18 @@ end
  local function generateframe ( humanname , r , v , id3version )
 	local datadiscarded
 	if type ( r ) == "string" and v and v [ 1 ] then
-		if string.sub ( r , 1 , 1 ) == "T" then
+		if strsub ( r , 1 , 1 ) == "T" then
 			if r == "TXXX" or r == "TXX" then -- Standard defined Text field
 				return genTXXXframe ( humanname , v , id3version )
 			else
 				local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-				local s = string.char ( e ) .. utf16 ( v [ 1 ] , "UTF-8" )
+				local s = strchar ( e ) .. utf16 ( v [ 1 ] , "UTF-8" )
 				for i =2 , #v do
-					s = s .. string.rep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+					s = s .. strrep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
 				end
 				return { id = r , contents = s } , datadiscarded
 			end
-		elseif string.sub ( r , 1 , 1 ) == "W" then
+		elseif strsub ( r , 1 , 1 ) == "W" then
 			if r == "WXXX" or r == "WXX" then -- Standard defined Link field
 				genWXXXframe ( humanname , v , id3version )
 			else
@@ -1088,7 +1097,7 @@ end
 			end
 		end
 	elseif not r and v and v [ 1 ] then
-		if string.find ( v [ 1 ] , "^%w+%://.+$" ) or string.match ( humanname , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
+		if strfind ( v [ 1 ] , "^%w+%://.+$" ) or strmatch ( humanname , ".*url$" ) then -- Is it a url? If so, chuck it in a WXXX -- TODO: improve url checker
 			return genWXXXframe ( humanname , v , id3version )
 		else	-- Put in a TXXX field
 			return genTXXXframe ( humanname , v , id3version )
@@ -1110,15 +1119,15 @@ local function clashfunc ( tbl , newvalue , overwrite , tblnodupes )
 	
 	local uniquefuncs = {
 		enc_encstring = function ( str )
-			local encoding = string.byte ( str:sub ( 1 , 1 ) )
-			local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+			local encoding = strbyte ( str:sub ( 1 , 1 ) )
+			local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
 			local s , e = str:find ( terminator , 2 , true )
 			local description = ascii ( str:sub ( 2 , e )  , encodings [ encoding ].name ):lower ( )
 			return description
 		end ,
 		enc_lang_encdesc = function ( str ) -- Unique language and description
-			local encoding = string.byte ( str:sub ( 1 , 1 ) )
-			local terminator = string.rep ( "\0" , encodings [ encoding ].nulls )
+			local encoding = strbyte ( str:sub ( 1 , 1 ) )
+			local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
 			local language = str:sub ( 2 , 4 )
 			local s , e = str:find ( terminator , 5 , true )
 			local description = str:sub ( 5 , e )
@@ -1384,7 +1393,7 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 	else
 		amountofpadding = #allframes -- Double the room we're already taking up
 	end
-	local padded = allframes .. string.rep ( "\0" , amountofpadding  )
+	local padded = allframes .. strrep ( "\0" , amountofpadding  )
 	
 	local tag = vstruct.pack ( "> s3 u1 x1 m1 m4 s" , { ( ( footer and "3DI" ) or "ID3" ) , tostring ( id3version ), flags , makesafesync ( #padded ) , padded } )
 	
@@ -1405,8 +1414,8 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 		elseif sizetofitinto < #tag then -- We don't fit, will have to rewrite file
 			--io.stderr:write("Damn, not enough room, rewriting tag\n")
 			
-			local dir = string.match ( path , "(.*/)" ) or  "./"
-			local filename = string.match ( path , "([^/]+)$" )
+			local dir = strmatch ( path , "(.*/)" ) or  "./"
+			local filename = strmatch ( path , "([^/]+)$" )
 			
 			-- Make a tmpfile
 			local tmpfilename , wd , err

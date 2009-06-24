@@ -24,6 +24,10 @@ require "modules.fileinfo.tagfrompath"
 -- If quick it set, lengths and bitrates of many VBR files will probably be incorrect
 local quick = false
 
+_NAME = "MPEG file format library"
+-- Specifications:
+ -- http://www.datavoyage.com/mpgscript/mpeghdr.htm
+
 local function bitread ( b , from , to )
 	to = to or from
 	return floor ( ( b % ( 2^to ) ) / 2^( from -1) )
@@ -195,6 +199,8 @@ function info ( item )
 		item.tagtype = "pathderived"
 		item.tags = fileinfo.tagfrompath.info ( item.path , config.tagpatterns.default )
 		item.extra = { }
+	else
+		item.tags , item.extra = { } , { }
 	end
 	
 	extra = item.extra
@@ -307,11 +313,12 @@ function info ( item )
 		bps = bytes*8/(length)
 		print("XING" , guesslength , length )
 		error()
-		if guesslength*1.01 > length or guesslength*.99 < length then -- If guessed length isn't within 1% of actual length, isn't CBR
-			extra.CBR = false
-		end
-	elseif item.tags.length then
+	elseif item.tags and item.tags.length then
 		length = item.tags.length [ 1 ]
+	end
+	if length and ( guesslength*1.01 > length or guesslength*.99 < length ) then -- If guessed length isn't within 1% of actual length, isn't CBR
+		print(guesslength,length)	
+		extra.CBR = false
 	end
 	-- Try and figure out if file is CBR:
 	if extra.CBR == nil and not quick then

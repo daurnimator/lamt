@@ -16,7 +16,9 @@ local strchar = string.char
 
 module ( "lomp.fileinfo.wavpack" , package.see ( lomp ) )
 
---http://www.wavpack.com/file_format.txt
+_NAME = "Wavpack file format library"
+-- Specifications:
+ -- http://www.wavpack.com/file_format.txt
 
 require "vstruct"
 
@@ -38,6 +40,9 @@ end
 	
 function info ( item )
 	local fd = io.open ( item.path , "rb" )
+	if not fd then return false end
+	item = item or { }
+	
 	-- APE
 	if not item.tagtype then
 		local offset , header = fileinfo.APE.find ( fd )
@@ -52,6 +57,8 @@ function info ( item )
 		item.tagtype = "pathderived"
 		item.tags = fileinfo.tagfrompath.info ( item.path , config.tagpatterns.default )
 		item.extra = { }
+	else
+		item.tags , item.extra = { } , { }
 	end
 	
 	fd:seek ( "set" )
@@ -87,13 +94,13 @@ function info ( item )
 		jointstereo = t.flags [ 5 ] ;
 		independantchanels = not t.flags [ 6 ] ;
 		floatingpoint = t.flags [ 7 ] ;
-		sampleratecode = intflags ( t.flags , 24 , 27 ) + 1 ;
 	}
-
+	
+	local sampleratecode = intflags ( t.flags , 24 , 27 ) + 1
 	if sampleratecode ~= 16 then
-		item.extra.samplerate = sample_rates [ item.extra.sampleratecode ] ;
+		item.extra.samplerate = sample_rates [ sampleratecode ] ;
 	else
-		-- TODO: metadata sub blocks
+		-- TODO: read metadata sub blocks
 	end
 	
 	if item.extra.hybrid then
