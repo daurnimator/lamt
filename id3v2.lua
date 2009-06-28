@@ -328,7 +328,7 @@ local frameencode = {
 		local language = "eng" -- 3 character language
 		local t = { }
 		for i , v in ipairs ( tags [ "comment" ] ) do
-			local shortdescription = ""--utf16 ( "Comment #" .. i ) -- UTF-16 string
+			local shortdescription = utf16 ( i ) -- UTF-16 string
 			t [ #t + 1 ] = strchar ( e ) .. language .. shortdescription .. strrep ( "\0" , encodings [ e ].nulls ) .. utf16 ( v , "UTF-8" )
 		end
 		local id = { false , "COM" , "COMM" , "COMM" }
@@ -379,26 +379,31 @@ local frameencode = {
 }
 
 local function readtextframe ( str )
-	local encoding = strbyte ( str:sub ( 1 , 1 ) )
+	local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
 	local text = str:sub ( 2 )
-	local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+	local terminator = strrep ( "\0" , encoding.nulls )
 	local st = strexplode ( text , terminator , true )
 	local r , index = { } , 0
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
 			index = index + 1
-			r [ index ] = utf8 ( v , encodings [ encoding ].name )
+			r [ index ] = utf8 ( v , encoding.name )
 		end
 	end
 	return r
 end
 
-local ignoreframes = { -- Ignore these frames
-	["NCON"] = true ; -- MusicMatch adds stuff in an unknown format in the NCON frame. These can get quite large.
-	["TCMP"] = true ; -- Itunes: When you check the "Part of a compilation" checkbox on the Info tab of the tag editor form, iTunes will add a non-standard TCMP frame to the tag.
-	["TBPM"] = true ; -- Mixmeister BPM analyzer (among others it seems) writes floating point values to the TBPM (Beats Per Minute) frame.
-	["CM1"] = true ; -- Tag that seems to pop its head in randomly
-}
+local ignoreframes = setmetatable ( 
+	{ -- Ignore these frames
+		["NCON"] = true ; -- MusicMatch adds stuff in an unknown format in the NCON frame. These can get quite large.
+		["TCMP"] = true ; -- Itunes: When you check the "Part of a compilation" checkbox on the Info tab of the tag editor form, iTunes will add a non-standard TCMP frame to the tag.
+		["TBPM"] = true ; -- Mixmeister BPM analyzer (among others it seems) writes floating point values to the TBPM (Beats Per Minute) frame.
+		["CM1"] = true ; -- Tag that seems to pop its head in randomly
+	} , { __index = function ( id )
+		local a = strsub ( id , 1 , 1 )
+		if a == "X" or a == "Y" or a == "Z" then return true end -- Frames starting with X Y or Z are experimental
+	end } 
+)
 
 local framedecode = {
 	["UFID"] = function ( str )
@@ -619,10 +624,11 @@ local framedecode = {
 	end ,
 	-- Special case, TXXX
 	["TXXX"] = function ( str ) -- Custom text frame
-		local encoding = strbyte ( str:sub ( 1 , 1 ) )
-		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+		local terminator = strrep ( "\0" ,  encoding.nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , e - 1 ) , encodings [ encoding ].name ):lower ( )
+		if not s then return false end
+		local field = ascii ( str:sub ( 2 , e - 1 ) , encoding.name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
 		local st = strexplode ( text , terminator , true )
@@ -630,7 +636,7 @@ local framedecode = {
 		local r = { }
 		for i , v in ipairs ( st ) do
 			if #v ~= 0 then
-				r [ #r + 1 ] = utf8 ( v , encodings [ encoding ].name )
+				r [ #r + 1 ] = utf8 ( v , encoding.name )
 			end
 		end
 		return { [ field ] =  r }
@@ -662,10 +668,11 @@ local framedecode = {
 		return { ["publisher url"] = { str } }
 	end ,
 	["WXXX"] = function ( str ) -- Custom
-		local encoding = strbyte ( str:sub ( 1 , 1 ) )
-		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+		local terminator = strrep ( "\0" , encoding.nulls )
 		local s , e = str:find ( terminator , 2 , true )
-		local field = ascii ( str:sub ( 2 , e - 1 ) , encodings [ encoding ].name )
+		if not s then return false end
+		local field = ascii ( str:sub ( 2 , e - 1 ) , encoding.name )
 		local url = str:sub ( e + 1 )
 		
 		if #field == 0 or not strfind ( field , "%w" )  then 
@@ -696,11 +703,12 @@ local framedecode = {
 	
 	-- Unsynchronised lyrics/text transcription
 	["USLT"] = function ( str )
-		local encoding = strbyte ( str:sub ( 1 , 1 ) )
-		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+		local terminator = strrep ( "\0" , encoding.nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
-		local description = str:sub ( 5 , e )
+		if not s then return false end
+		local description = str:sub ( 5 , e - 1 )
 		local text = str:sub ( e + 1 )
 
 		-- TODO: Can we do anything with language or description?
@@ -712,13 +720,14 @@ local framedecode = {
 	
 	-- Comment
 	["COMM"] = function ( str )
-		local encoding = strbyte ( str:sub ( 1 , 1 ) )
-		local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+		local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+		local terminator = strrep ( "\0" , encoding.nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
-		local description = str:sub ( 5 , e )
+		if not s then return false end
+		local description = str:sub ( 5 , e - 1 )
 		local text = str:sub ( e + 1 )
-		text = utf8 ( text , encodings [ encoding ].name )
+		text = utf8 ( text , encoding.name )
 		-- TODO: Can we do anything with language or description?
 		return { [ "comment" ] = { text } }
 	end ,
@@ -758,15 +767,16 @@ local framedecode = {
 	end ,
 
 	["USER"] = function ( str ) -- Terms of use frame
-		local encoding = strbyte ( str:sub ( 1 , 1 ) )
-		local terminator = strrep ( "\0" , encodings [ t.encoding ].nulls )
+		local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+		local terminator = strrep ( "\0" , encoding.nulls )
 		local language = str:sub ( 2 , 4 )
 		local s , e = str:find ( terminator , 5 , true )
-		local description = str:sub ( 5 , e )
+		if not s then return false end
+		local description = str:sub ( 5 , e - 1 )
 		local text = str:sub ( e + 1 )
 		
 		-- TODO: Can we do anything with language or description?
-		return { [ "terms of use" ] = { t.text } }
+		return { [ "terms of use" ] = { text } }
 	end ,
 
 	["OWNE"] = function ( str ) -- Ownership frame
@@ -1032,10 +1042,12 @@ function info ( fd , location , header )
 			sd:seek ( "set" , ok.startcontent )
 			local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 			if frame then
-				if ignoreframes [ ok.id ] then
-				elseif framedecode [ ok.id ] then
+				if framedecode [ ok.id ] then
 					--updatelog ( _NAME .. ": v" .. header.version .. " Read frame: " .. ok.id .. " Size: " .. ok.size , 5 )
-					table.inherit ( tags , ( framedecode [ ok.id ] ( frame ) or { } ) , true )
+					local newtags = framedecode [ ok.id ] ( frame )
+					table.inherit ( tags , ( newtags or { } ) , true )
+				elseif ignoreframes [ ok.id ] then
+					
 				else -- We don't know of this frame type
 					local content
 					if ok.size > 100 then
@@ -1119,18 +1131,18 @@ local function clashfunc ( tbl , newvalue , overwrite , tblnodupes )
 	
 	local uniquefuncs = {
 		enc_encstring = function ( str )
-			local encoding = strbyte ( str:sub ( 1 , 1 ) )
-			local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+			local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+			local terminator = strrep ( "\0" , encoding.nulls )
 			local s , e = str:find ( terminator , 2 , true )
-			local description = ascii ( str:sub ( 2 , e )  , encodings [ encoding ].name ):lower ( )
+			local description = ascii ( str:sub ( 2 , e - 1 )  , encoding.name ):lower ( )
 			return description
 		end ,
 		enc_lang_encdesc = function ( str ) -- Unique language and description
-			local encoding = strbyte ( str:sub ( 1 , 1 ) )
-			local terminator = strrep ( "\0" , encodings [ encoding ].nulls )
+			local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+			local terminator = strrep ( "\0" , encoding.nulls )
 			local language = str:sub ( 2 , 4 )
 			local s , e = str:find ( terminator , 5 , true )
-			local description = str:sub ( 5 , e )
+			local description = str:sub ( 5 , e - 1 )
 			return language..description
 		end ,
 		nullterm = function ( str ) -- Unique is first null terminated string
@@ -1309,7 +1321,8 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 				local tags = { }
 				for i , v in ipairs ( t ) do 
 					if framedecode [ v.id ] then
-						table.inherit ( tags , ( framedecode [ v.id ] ( v.contents ) or { } ) , true )
+						local newtags = framedecode [ v.id ] ( v.contents )
+						table.inherit ( tags , ( newtags or { } ) , true )
 					end
 				end
 				local existing , dd = generateframes ( tags , id3version , overwrite )
