@@ -1047,7 +1047,7 @@ function info ( fd , location , header )
 					local newtags = framedecode [ ok.id ] ( frame )
 					table.inherit ( tags , ( newtags or { } ) , true )
 				elseif ignoreframes [ ok.id ] then
-					
+					updatelog ( _NAME .. ": v" .. header.version .. " Frame Ignored: " .. ok.id .. " Size: " .. ok.size , 5 )
 				else -- We don't know of this frame type
 					local content
 					if ok.size > 100 then
@@ -1055,7 +1055,7 @@ function info ( fd , location , header )
 					else
 						content = frame
 					end
-					updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. content , 5 )
+					updatelog ( _NAME .. ": v" .. header.version .. " Unknown frame: " .. ok.id .. " Size: " .. ok.size .. " Contents: " .. content , 4 )
 				end
 			end
 		elseif err == "padding" then
