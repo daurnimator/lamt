@@ -151,8 +151,9 @@ function info ( item )
 	
 	local tagatsof = 0 -- Bytes that tags use at start of file
 	local tagateof = 0 -- Bytes that tags use at end of file
+	
 	-- APE
-	do
+	if not item.tagtype then
 		local offset , header = fileinfo.APE.find ( fd )
 		if offset and not item.tagtype then
 			if offset == 0 then 
@@ -170,7 +171,7 @@ function info ( item )
 	end
 
 	-- ID3v2
-	do
+	if not item.tagtype then
 		local offset , header = fileinfo.id3v2.find ( fd )
 		if offset and not item.tagtype then
 			if offset == 0 then
@@ -183,9 +184,9 @@ function info ( item )
 			item.tags , item.extra = fileinfo.id3v2.info ( fd , offset , header )
 		end
 	end
-
+	
 	-- ID3v1 or ID3v1.1 tag
-	do
+	if not item.tagtype then
 		local offset = fileinfo.id3v1.find ( fd )
 		if offset then tagateof = tagateof + 128 end
 		if offset and not item.tagtype then
@@ -195,12 +196,14 @@ function info ( item )
 	end
 	
 	-- Figure out from path
-	if not item.tagtype and config and config.tagpatterns and config.tagpatterns.default then -- If you get to here, there is probably no tag....
-		item.tagtype = "pathderived"
-		item.tags = fileinfo.tagfrompath.info ( item.path , config.tagpatterns.default )
-		item.extra = { }
-	else
-		item.tags , item.extra = { } , { }
+	if not item.tagtype then
+		if config and config.tagpatterns and config.tagpatterns.default then -- If you get to here, there is probably no tag....
+			item.tagtype = "pathderived"
+			item.tags = fileinfo.tagfrompath.info ( item.path , config.tagpatterns.default )
+			item.extra = { }
+		else
+			item.tags , item.extra = { } , { }
+		end
 	end
 	
 	extra = item.extra
