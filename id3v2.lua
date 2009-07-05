@@ -1080,7 +1080,7 @@ function info ( fd , location , header )
 		local ok , err = readframeheader ( sd , header )
 		if ok then
 			sd:seek ( "set" , ok.startcontent )
-			ok.unsynched = ok.unsynched or header.unsynched -- Frame
+			ok.unsynched = ok.unsynched or header.unsynched -- Frame is unsynched if flag set in frameheader or id3header
 			local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 			if frame then
 				if framedecode [ ok.id ] then
@@ -1325,15 +1325,12 @@ function edit ( tags , path , overwrite , id3version , footer , dontwrite )
 		elseif header then
 			t , nexti = { version = header.version } , 1
 			local id3tag = fd:read ( header.size )
-			if header.unsynched then
-				id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-					:gsub ( "\255%z%z" ,  "\255\0" )
-			end
 			local sd = vstruct.cursor ( id3tag )
 			while sd:seek ( "cur" ) < ( header.size - header.frameheadersize  ) do
 				local ok , err = readframeheader ( sd , header )
 				if ok then
 					sd:seek ( "set" , ok.startcontent )
+					ok.unsynched = ok.unsynched or header.unsynched -- Frame is unsynched if flag set in frameheader or id3header
 					local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 						if err then -- If can't decode, skip over the frame
 					else
