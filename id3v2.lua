@@ -67,6 +67,30 @@ local encodings = {
 	[ 3 ] = { name = "UTF-8" , nulls = "1" } , 
 }
 
+local picturetypes = {
+	[ 0x00 ] = "Other" ; 
+	[ 0x01 ] = "32x32 pixels 'file icon' (PNG only)" ;
+	[ 0x02 ] = "Other file icon" ;
+	[ 0x03 ] = "Cover (front)" ;
+	[ 0x04 ] = "Cover (back)" ;
+	[ 0x05 ] = "Leaflet page" ;
+	[ 0x06 ] = "Media (e.g. lable side of CD)" ;
+	[ 0x07 ] = "Lead artist/lead performer/soloist" ;
+	[ 0x08 ] = "Artist/performer" ;
+	[ 0x09 ] = "Conductor" ;
+	[ 0x0A ] = "Band/Orchestra" ;
+	[ 0x0B ] = "Composer" ;
+	[ 0x0C ] = "Lyricist/text writer" ;
+	[ 0x0D ] = "Recording Location" ;
+	[ 0x0E ] = "During recording" ;
+	[ 0x0F ] = "During performance" ;
+	[ 0x10 ] = "Movie/video screen capture" ;
+	[ 0x11 ] = "A bright coloured fish" ;
+	[ 0x12 ] = "Illustration" ;
+	[ 0x13 ] = "Band/artist logotype" ;
+	[ 0x14 ] = "Publisher/Studio logotype" ;
+}
+
 local function readheader ( fd )
 	local t = vstruct.unpack ( "> ident:s3 version:u1 revision:u1 flags:m1 safesyncsize:m4" , fd )
 	if ( t.ident == "ID3" or t.ident == "3DI" ) then
@@ -399,7 +423,7 @@ local ignoreframes = setmetatable (
 		["TCMP"] = true ; -- Itunes: When you check the "Part of a compilation" checkbox on the Info tab of the tag editor form, iTunes will add a non-standard TCMP frame to the tag.
 		["TBPM"] = true ; -- Mixmeister BPM analyzer (among others it seems) writes floating point values to the TBPM (Beats Per Minute) frame.
 		["CM1"] = true ; -- Tag that seems to pop its head in randomly
-	} , { __index = function ( id )
+	} , { __index = function ( t , id )
 		local a = strsub ( id , 1 , 1 )
 		if a == "X" or a == "Y" or a == "Z" then return true end -- Frames starting with X Y or Z are experimental
 	end } 
@@ -742,7 +766,17 @@ local framedecode = {
 	end ,
 	
 	["APIC"] = function ( str ) -- Attached pictures
-		-- TODO: interpret pictures
+		local encoding = encodings [ strbyte ( str:sub ( 1 , 1 ) ) ]
+		local terminator = strrep ( "\0" , encoding.nulls )
+		local a , b , mimetype = str:find ( "([^%z]*)" , 2 )
+		local picturetype = str:byte ( b + 2 , b + 2 )
+		local s , e = str:find ( terminator , b + 3 , true )
+		local description = str:sub ( b + 3 , e - 1 )
+		local picturedata = str:sub ( e + 1 )
+		if mimetype == "-->" then print("Id3 APIC mimetype is a link!" )
+		elseif not mimetype:find ( "/" ) then mimetype = "image/" .. mimetype end
+		picturetype = picturetypes [ picturetype ] or picturetype
+		-- TODO: use pictures
 	end ,
 	
 	["GEOB"] = function ( str ) -- General encapsulated object
@@ -929,9 +963,19 @@ local function readframeheader ( fd , header )
 				t.grouped = t.formatflags [ 7 ]
 				t.unsynched = t.formatflags [ 2 ]
 				t.hasdatalength = t.formatflags [ 1 ]
-				if t.grouped then t.groupingbyte = fd:read ( 1 ) end
-				if t.encrypted then t.encryption = fd:read ( 1 ) end
-				if t.hasdatalength then t.datalength = fd:read ( 4 ) end
+				if t.grouped then
+					t.size = t.size - 1
+					t.groupingbyte = fd:read ( 1 )
+				end
+				if t.encrypted then
+					t.size = t.size - 1
+					t.encryption = fd:read ( 1 )
+				end
+				if t.hasdatalength then
+					t.size = t.size - 4
+					local d = vstruct.unpack ( ">m4" , fd ) [ 1 ]
+					t.datalength = desafesync ( d )
+				end
 			elseif header.version <= 3 then -- id3v2.3
 				t.size = t.framesize
 				-- Flags: %abc00000 %ijk00000 
@@ -1031,15 +1075,12 @@ function info ( fd , location , header )
 	local tags , extra = { } , { id3v2version = header.version }
 	
 	local id3tag = fd:read ( header.size )
-	if header.unsynched then
-		id3tag = id3tag:gsub ( "\255%z([224-\255])" ,  "\255%1" )
-			:gsub ( "\255%z%z" ,  "\255\0" )
-	end
 	local sd = vstruct.cursor ( id3tag )
 	while sd:seek ( "cur" ) < ( #id3tag - header.frameheadersize ) do
 		local ok , err = readframeheader ( sd , header )
 		if ok then
 			sd:seek ( "set" , ok.startcontent )
+			ok.unsynched = ok.unsynched or header.unsynched -- Frame
 			local frame , err = decodeframe ( sd:read ( ok.size ) , header , ok )
 			if frame then
 				if framedecode [ ok.id ] then
