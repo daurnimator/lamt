@@ -146,7 +146,7 @@ end
 
 function info ( item )
 	local fd = io.open ( item.path , "rb" )
-	if not fd then return false end
+	if not fd then return false , "Could not open file" end
 	item = item or { }
 	
 	local tagatsof = 0 -- Bytes that tags use at start of file
@@ -319,8 +319,7 @@ function info ( item )
 	elseif item.tags and item.tags.length then
 		length = item.tags.length [ 1 ]
 	end
-	if length and ( guesslength*1.01 > length or guesslength*.99 < length ) then -- If guessed length isn't within 1% of actual length, isn't CBR
-		print(guesslength,length)	
+	if length and ( guesslength*1.01 < length or guesslength*.99 > length ) then -- If guessed length isn't within 1% of actual length, isn't CBR
 		extra.CBR = false
 	end
 	-- Try and figure out if file is CBR:

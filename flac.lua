@@ -26,8 +26,8 @@ end
 
 function info ( item )
 	local fd = io.open ( item.path , "rb" )
+	if not fd then return false , "Could not open file" end
 	item = item or { }
-	
 	fd:seek ( "set" ) -- Rewind file to start
 	-- Format info found at http://flac.sourceforge.net/format.html
 	if fd:read ( 4 ) == "fLaC" then 
@@ -168,4 +168,4 @@ function edit ( path , tags , inherit )
 	return false
 end
 
-return { { "flac" } , info , edit }
+return { { "flac" , "fla" } , info , edit }
