@@ -327,8 +327,8 @@ function info ( item )
 		local testpositions = { 0.2 , 0.7 }
 		-- Look at certain percentages of the way through the file:
 		-- If they have a different bitrates, file must be VBR
-		for i , v in ipairs ( testpositions ) do
-			fd:seek ( "set" , firstframeoffset + bytes * v )
+		for i , percentoffset in ipairs ( testpositions ) do
+			fd:seek ( "set" , firstframeoffset + floor ( bytes * percentoffset ) )
 			
 			local newbitrate , newerbitrate
 			while true do
