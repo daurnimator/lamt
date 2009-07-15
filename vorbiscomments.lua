@@ -11,6 +11,9 @@
 
 require "general"
 
+local strlower , strmatch ,  strgsub = string.lower , string.match , strgsub
+local tblinsert = table.insert
+
 module ( "lomp.fileinfo.vorbiscomments" , package.seeall )
 
 require "vstruct"
@@ -25,33 +28,28 @@ function info ( fd , item )
 	item.extra.vendor_string = vstruct.unpack ( "< c4" , fd ) [ 1 ]
 	
 	for i = 1 , vstruct.unpack ( "< u4" , fd ) [ 1 ] do -- 4 byte interger indicating how many comments.
-		local fieldname , value = string.match ( vstruct.unpack ( "< c4" , fd ) [ 1 ] , "([^=]+)=(.+)")
-		fieldname = string.lower ( fieldname )
+		local line = vstruct.unpack ( "< c4" , fd ) [ 1 ]
+		local fieldname , value = strmatch ( line , "([^=]+)=(.*)" )
+		fieldname = strlower ( fieldname )
 		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
-		table.insert ( item.tags [ fieldname ] , value )
+		tblinsert ( item.tags [ fieldname ] , value )
 	end
 end
 
-function generatetag ( tags )
-	local vendor_string = core._PROGRAM .. " " .. _NAME
-	
-	local vstructstring = "< "
-	local vstructdata = { }
-	
-	vstructstring  = vstructstring  .. "{ u4 s } "
-	table.insert ( vstructdata , { #vendor_string , vendor_string } )
-	
+function generatetag ( tags )	
 	local commenttbl = { }
 	for k , v in pairs ( tags ) do
-		k = string.lower (  string.gsub ( k , "=" , "" ) ) -- Remove any equals signs, change to lowercase
+		k = strlower (  strgsub ( k , "=" , "" ) ) -- Remove any equals signs, change to lowercase
 		for i , v in ipairs ( v ) do
-			local str = k .."="..v
-			table.insert ( commenttbl ,  { #str , str } )
+			local str = k .. "=" .. v
+			commenttbl [ #commenttbl + 1 ] = { #str , str }
 		end
 	end
-	vstructstring = vstructstring .. "u4 { " .. #commenttbl .. " * { u4 s } } "
-	table.insert ( vstructdata , #commenttbl )
-	table.insert ( vstructdata , commenttbl )
+	
+	local vendor_string = core._PROGRAM .. " " .. _NAME
+	
+	local vstructstring = "< { u4 s } u4 { " .. #commenttbl .. " * { u4 s } } "
+	local vstructdata = { { #vendor_string , vendor_string } , #commenttbl , commenttbl }
 	
 	return vstruct.pack ( vstructstring , vstructdata )
 end

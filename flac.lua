@@ -15,6 +15,8 @@ module ( "lomp.fileinfo.flac" , package.see ( lomp ) )
 
 require "vstruct"
 
+require "modules.fileinfo.vorbiscomments"
+
 _NAME = "FLAC reader"
 
 function find ( fd )
@@ -70,8 +72,7 @@ function info ( item )
 				item.tags = { }
 				item.extra.startvorbis = fd:seek ( ) - 4
 				
-				require "modules.fileinfo.vorbiscomments"
-				lomp.fileinfo.vorbiscomments.info ( fd , item )
+				fileinfo.vorbiscomments.info ( fd , item )
 				
 			elseif blocktype == 5 then -- Cuesheet
 				t = vstruct.unpack ( "> s128 u8 x259 x1 x" .. ( blocklength - ( 128 + 8 + 259 + 1 ) ) , fd ) -- cbf, TODO: cuesheet reading
