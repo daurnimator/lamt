@@ -119,7 +119,7 @@ function info ( item )
 				end
 			end
 			if item.bitrate and item.tagtype then 
-				fd:seek ( "end" , -65536 ) -- Seek 64KB from end of file (max length of a page) 
+				fd:seek ( "end" , -65536 ) -- Seek 64KB from end of file (max length of last page) 
 				done = true
 			end
 		else
@@ -129,7 +129,6 @@ function info ( item )
 			end		
 		end
 	end
-	
 	if not item.tagtype then -- If tags were never found, figure out from path
 		if config and config.tagpatterns and config.tagpatterns.default then -- If you get to here, there is probably no tag....
 			item.tagtype = "pathderived"
@@ -139,11 +138,15 @@ function info ( item )
 	
 	item.filesize = fd:seek ( "end" )
 	
+	if not item.length then
+		item.length = item.filesize / ( item.bitrate / 8 )
+	end
+	
 	return item
 end
 
 function edit ( item , edits , inherit )
-
+	return false
 end
 
-return { { "ogg" } , info , edit }
+return { { "ogg" , "oga" } , info , edit }
