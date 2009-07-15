@@ -222,10 +222,10 @@ function info ( item )
 		local found = false
 		while not found do while not found do
 			firstframeoffset , a , b , c , d = findframesync ( fd )
-			fd:seek ( "cur" , 1 )
 			if not firstframeoffset then -- No frames found in file
 				return false
 			end
+			fd:seek ( "cur" , 1 ) -- Seek one byte forward for next iteration
 			
 			version = mpegversion [ bitread ( b , 4 , 5 ) ]
 			layer = tolayer [ bitread ( b , 2 , 3 ) ]

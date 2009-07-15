@@ -11,42 +11,84 @@
 
 require "general"
 
-module ( "lomp.fileinfo.ogg" , package.seeall )
+local strbyte = string.byte
 
 require "vstruct"
 
+module ( "lomp.fileinfo.ogg" , package.see ( lomp ) )
+
+local O , g , S = string.byte ( "OgS" , 1 , 3 )
+local function validpage ( a , b , c , d )
+	if a == O and b == g and c == g and d == S then return true else return false end
+end
+
+function findpage ( fd )
+	local step = 2048
+	local a , b , c , d
+	local str = fd:read ( 4 )
+	if not str then return false end -- EOF
+	local t = { nil , nil , strbyte ( str , 1 , 4 ) } -- Check for frame at current offset first
+	
+	local i = 3
+	while true do
+		if not t [ i + 3 ] then
+			str = fd:read ( step )
+			if not str then return false end -- EOF
+			t = { b , c , strbyte ( str , 1 , #str ) }
+			i = 1
+		end
+		a , b , c , d =  unpack ( t , i , i + 3 )
+		if validpage ( a , b , c , d ) then return fd:seek ( "cur" , - #str + i - 3 ) end
+		i = i + 1
+	end
+	return false
+end
+
 function info ( item )
-	fd = io.open ( item.path , "rb" )
+	local fd = io.open ( item.path , "rb" )
+	if not fd then return false , "Could not open file" end
+	item = item or { }
+	item.extra = item.extra or { }
 	
-	local t = vstruct.unpack ( "< magic:s4 version:u1 header_type_flag:m1 granule_position:i8 bitstream_serial_number:u4 page_sequence_number:u4 CRC_checksum:i4 number_page_segments:u1" , fd )
-	if t.magic ~= "OggS" then
-		return ferror ( "Not an Ogg Stream" , 4 )
-	end
-	if t.version > 0 then
-		return ferror ( "Unsupport ogg version" , 4 )
-	end
-	
-	local complete = true
-	
-	local lacing_bytes = fd:read ( t.number_page_segments )
-	local lacings = { }
-	local total = 0
-	for i , v in ipairs { lacing_bytes:byte ( 1 , #lacing_bytes ) } do
-		total = total + v
-		if v < 255 then
-			lacings [ #lacings + 1 ] = total
-			total = 0
+	local firstpageoffset = findpage ( fd )
+	local header = vstruct.unpack ( "OggS:s4 version:u1 headertype:m1 granuleposition:u8 bitstreamserial:u4 sequencenumber:u4 checksum:u4 segments:u1" , fd )
+	if header.version ~= 0 then return false , "Unsupported ogg version" end
+	local segmenttable = { strbyte ( fd:read ( header.segments ) , 1 , header.segments ) }
+	local segments , nexti = { } , 1
+	for i , v in ipairs ( segmenttable ) do
+		segments [ nexti ] = ( segments [ nexti ] or "" ) .. fd:read ( v )
+		if v ~= 255 then
+			nexti = nexti + 1
 		end
 	end
-	if total > 0 then
-		lacings [ #lacings + 1 ] = total
-		complete = false
+
+	-- Check vorbis
+	if segments [ 1 ]:sub ( 2 , 7 ) ~= "vorbis" then
+		return false , "Not Vorbis"
+	end
+	item.format = "vorbis"
+	
+	local packet_type = segments [ 1 ]:byte ( 1 , 1 )
+	if packet_type == 1 then -- ID header
+		local sd = vstruct.cursor ( segments [ 1 ] )
+		sd:seek  ( "set" , 7 )
+		local id = vstruct.unpack ( "version:u4 channels:u1 samplerate:u4 bitrate_maximum:i4 bitrate_nominal:i4 bitrate_minimum:i4 blocksize:x1 framingflag:m1" , sd )
+		item.bitrate = id.bitrate_nominal
+		item.channels = id.channels
+		item.samplerate = id.samplerate
+		item.extra.bitrate_maximum = id.bitrate_maximum
+		item.extra.bitrate_nominal = id.bitrate_nominal
+		item.extra.bitrate_minimum = id.bitrate_minimum
+	elseif packet_type == 3 then -- Comment header
+	elseif packet_type == 5 then -- Setup header
+	else
 	end
 	
+	return item
 end
 
 function edit ( item , edits , inherit )
 
 end
 
-return { {} , info , edit }
+return { { "ogg" } , info , edit }
