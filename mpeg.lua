@@ -436,4 +436,4 @@ function edit ( item , edits , inherit )
 	end
 end
 
-return { { "mp3" , "mp2" , "mpg" , "mpeg" , "mpa" , "mp1" } , info , edit }
+return { { "mpeg" ; "mpg" ; "mp1" ; "mp2" ; "mp3" ; "mpa" ; } , info , edit }
