@@ -11,12 +11,12 @@
 
 require "general"
 
-local strlower , strmatch ,  strgsub = string.lower , string.match , strgsub
+local ipairs , pairs , require = ipairs , pairs , require
 local tblinsert = table.insert
 
-module ( "lomp.fileinfo.vorbiscomments" , package.seeall )
+module ( "lomp.fileinfo.vorbiscomments" )
 
-require "vstruct"
+local vstruct = require "vstruct"
 
 _NAME = "Vorbis comment tag reader/writer"
 -- Vorbis_Comment http://www.xiph.org/vorbis/doc/v-comment.html
@@ -29,17 +29,17 @@ function info ( fd , item )
 	
 	for i = 1 , vstruct.unpack ( "< u4" , fd ) [ 1 ] do -- 4 byte interger indicating how many comments.
 		local line = vstruct.unpack ( "< c4" , fd ) [ 1 ]
-		local fieldname , value = strmatch ( line , "([^=]+)=(.*)" )
-		fieldname = strlower ( fieldname )
+		local fieldname , value = line:match ( "([^=]+)=(.*)" )
+		fieldname = fieldname:lowe ( )
 		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
-		tblinsert ( item.tags [ fieldname ] , value )
+		item.tags [ fieldname ] [ #item.tags [ fieldname ] + 1 ] = value
 	end
 end
 
 function generatetag ( tags )	
 	local commenttbl = { }
 	for k , v in pairs ( tags ) do
-		k = strlower (  strgsub ( k , "=" , "" ) ) -- Remove any equals signs, change to lowercase
+		k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
 		for i , v in ipairs ( v ) do
 			local str = k .. "=" .. v
 			commenttbl [ #commenttbl + 1 ] = { #str , str }

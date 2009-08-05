@@ -11,9 +11,12 @@
 
 require "general"
 
+local ipairs , require , type , unpack = ipairs , require , type , unpack
+local ioopen = io.open
+
 module ( "lomp.fileinfo.flac" , package.see ( lomp ) )
 
-require "vstruct"
+local vstruct = require "vstruct"
 
 require "modules.fileinfo.vorbiscomments"
 
@@ -27,7 +30,7 @@ function find ( fd )
 end
 
 function info ( item )
-	local fd = io.open ( item.path , "rb" )
+	local fd = ioopen ( item.path , "rb" )
 	if not fd then return false , "Could not open file" end
 	item = item or { }
 	fd:seek ( "set" ) -- Rewind file to start
@@ -59,12 +62,12 @@ function info ( item )
 				item.extra.md5rawaudio = t [ 6 ]
 			elseif blocktype == 1 then -- Padding
 				item.extra.padding = item.extra.padding or { }
-				table.insert ( item.extra.padding , { start = fd:seek ( ) , length = blocklength , } )
+				item.extra.padding [ #item.extra.padding + 1 ] = { start = fd:seek ( ) ; length = blocklength ; }
 				t = vstruct.unpack ( "> x" .. blocklength , fd )
 			elseif blocktype == 2 then -- Application
 				t = vstruct.unpack ( "> u4 s" .. ( blocklength - 4 ) , fd )
 				item.extra.applications = item.extra.applications or { }
-				table.insert ( item.extra.applications , { appID = t [ 1 ] , appdata = t [ 2 ] } )
+				item.extra.applications [ #item.extra.applications + 1 ] = { appID = t [ 1 ] , appdata = t [ 2 ] }
 			elseif blocktype == 3 then -- Seektable
 				t = vstruct.unpack ( "> x" .. blocklength , fd ) -- We don't deal with seektables, skip over it
 			elseif blocktype == 4 then
@@ -118,7 +121,7 @@ function write ( fd , tags )
 	local item = info ( fd )
 	
 	local vendor_string = item.extra.vendor_string or "Xiph.Org libVorbis I 20020717"
-	local vendor_length = string.len ( vendor_string )
+	local vendor_length = #vendor_string
 	
 	local commentcount = 0
 	local s = ""
@@ -126,16 +129,16 @@ function write ( fd , tags )
 		for i , v in ipairs ( v ) do
 			commentcount = commentcount + 1
 			local comment = k .. "=" .. v
-			local length = string.len ( comment )
+			local length = #comment
 			s = s .. vstruct.pack ( "u4 s" , length , comment )
 		end
 	end
 	
 	s = vstruct.pack ( "u4 s u4" , vendor_length , vendor_string , commentcount ) .. s
-	local length = string.len ( s )
+	local length = #s
 	s = vstruct.pack ( "u3" , length ) .. s
 	
-	local space_needed = string.len ( s )
+	local space_needed = #s
 	
 	local oldblocksize = 0
 	if item.extra.startvorbis then
@@ -160,7 +163,7 @@ function write ( fd , tags )
 end
 
 function edit ( path , tags , inherit )
-	local fd = io.open ( path , "rb+" )
+	local fd , err = ioopen ( path , "rb+" )
 	if not fd then return ferror ( err , 3 ) end
 	
 	--write ( fd , tags )

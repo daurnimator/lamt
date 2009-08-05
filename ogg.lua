@@ -11,7 +11,8 @@
 
 require "general"
 
-local strbyte = string.byte
+local ipairs , require , unpack = ipairs , require , unpack
+local ioopen = io.open
 
 module ( "lomp.fileinfo.ogg" , package.see ( lomp ) )
 
@@ -19,24 +20,24 @@ require "vstruct"
 
 require "modules.fileinfo.vorbiscomments"
 
-local O , g , S = string.byte ( "OgS" , 1 , 3 )
+local O , g , S = ( "OgS" ):byte ( 1 , 3 )
 local function validpage ( a , b , c , d )
 	if a == O and b == g and c == g and d == S then return true else return false end
 end
 
-function findpage ( fd )
+local function findpage ( fd )
 	local step = 2048
 	local a , b , c , d
 	local str = fd:read ( 4 )
 	if not str then return false end -- EOF
-	local t = { nil , nil , strbyte ( str , 1 , 4 ) } -- Check for frame at current offset first
+	local t = { nil , nil , str:byte ( 1 , 4 ) } -- Check for frame at current offset first
 	
 	local i = 3
 	while true do
 		if not t [ i + 3 ] then
 			str = fd:read ( step )
 			if not str then return false end -- EOF
-			t = { b , c , strbyte ( str , 1 , #str ) }
+			t = { b , c , str:byte ( 1 , #str ) }
 			i = 1
 		end
 		a , b , c , d =  unpack ( t , i , i + 3 )
@@ -46,7 +47,7 @@ function findpage ( fd )
 	return false
 end
 
-function readpage ( fd , segments , cont )
+local function readpage ( fd , segments , cont )
 	local lastlen
 	if cont then
 		lastlen = 255
@@ -57,7 +58,7 @@ function readpage ( fd , segments , cont )
 	local header = vstruct.unpack ( "OggS:s4 version:u1 headertype:m1 granuleposition:u8 bitstreamserial:u4 sequencenumber:u4 checksum:u4 segments:u1" , fd )
 	if header.version ~= 0 then return false , "Unsupported ogg version" end
 	
-	local segmenttable = { strbyte ( fd:read ( header.segments ) , 1 , header.segments ) }
+	local segmenttable = { fd:read ( header.segments ):byte ( 1 , header.segments ) }
 	segments = segments or { }
 	local nexti = #segments
 	for i , v in ipairs ( segmenttable ) do
@@ -74,7 +75,7 @@ function readpage ( fd , segments , cont )
 end
 
 function info ( item )
-	local fd = io.open ( item.path , "rb" )
+	local fd = ioopen ( item.path , "rb" )
 	if not fd then return false , "Could not open file" end
 	item = item or { }
 	item.extra = item.extra or { }

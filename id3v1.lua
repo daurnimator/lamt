@@ -11,10 +11,13 @@
 
 require "general"
 
+local ipairs , pairs , pcall , select , require , tonumber , tostring , type = ipairs , pairs , pcall , select , require , tonumber , tostring , type
+local ioopen = io.open
+
 module ( "lomp.fileinfo.id3v1" , package.see ( lomp ) )
 
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
-require "iconv"
+local iconv = require "iconv"
 local genreindex = require ( select ( 1 , ... ):match ( "(.*%.)[^.]+$" ) .. "genrelist" )
 
 local Locale = "ISO-8859-1"
@@ -50,7 +53,7 @@ function info ( fd , offset )
 	if offset then fd:seek ( "set" , offset ) end
 	
 	if fd:read ( 3 ) ==  "TAG" then 
-		tags = { }
+		local tags = { }
 		tags.title = { readstring ( fd:read( 30 ) ) } 
 		tags.artist = { readstring ( fd:read ( 30 ) ) } 
 		tags.album = { readstring ( fd:read ( 30 ) ) } 
@@ -65,14 +68,14 @@ function info ( fd , offset )
 				tags.comment = { readstring ( a , 28 ) }
 				
 				-- Get track number
-				local track = string.byte ( fd:read ( 1 ) )
+				local track = fd:read ( 1 ):byte ( )
 				if track ~= 0 then tags.tracknumber = { track } end
 			else -- Is ID3v1, could have a 30 character comment tag
 				tags.comment = { readstring ( a .. b .. fd:read ( 1 ) ) } 
 			end
 		end
 		
-		tags.genre = { genreindex [ tonumber ( string.byte( fd:read ( 1 ) ) ) ] }
+		tags.genre = { genreindex [ tonumber ( fd:read ( 1 ):byte( ) ) ] }
 		
 		-- Check for extended tags (Note: these are damn rare, worthwhile supporting them??)
 		fd:seek ( "end" , -355 )
@@ -80,7 +83,7 @@ function info ( fd , offset )
 			tags.title [ 1 ] = tags.title[1] .. readstring ( fd:read ( 60 ) )
 			tags.artist [ 1 ] = tags.artist[1] .. readstring ( fd:read ( 60 ) )
 			tags.album [ 1 ] = tags.album[1] .. readstring ( fd:read ( 60 ) )
-			tags.speed = { speedindex [ tonumber ( string.byte ( fd:read ( 1 ) ) ) ] }
+			tags.speed = { speedindex [ tonumber ( fd:read ( 1 ):byte ( ) ) ] }
 			tags.genre [ 2 ] = readstring ( fd:read ( 30 ) )
 			do
 				local start = readstring ( fd:read ( 30 ) )
@@ -101,13 +104,15 @@ function info ( fd , offset )
 	end
 end
 
-local function guessyear ( datestring )
-	function twodigityear ( capture )
-		if tonumber ( capture ) < 30 then -- Break on 30s
-			return "20"..capture 
-		else return "19" .. capture
-		end
+local function twodigityear ( capture )
+	if tonumber ( capture ) < 30 then -- Break on 30s
+		return "20"..capture
+	else 
+		return "19" .. capture
 	end
+end
+	
+local function guessyear ( datestring )
 	local patterns = {
 		[".*%f[%d](%d%d%d%d)%f[%D].*"] = { matches = 1 , replace = "%1" }, -- MAGICAL FRONTIER PATTERN (undocumented)
 		["^%W*(%d%d)%W*$"] = { matches = 1 , replace = twodigityear }, -- Eg: 70 or '70
@@ -116,7 +121,7 @@ local function guessyear ( datestring )
 		[".*%W(%d%d)%W*$"] = { matches = 1 , replace = twodigityear }, -- Eg: Concert of '97.
 	}
 	for k , v in pairs ( patterns ) do
-		local s , m = string.gsub ( datestring , k , v.replace )
+		local s , m = datestring:gsub ( k , v.replace )
 		if m == v.matches then return s end
 	end
 	return false
@@ -124,15 +129,15 @@ end
 
 local function makestring ( str , tolength )
 	str = toid3:iconv ( str )
-	str = string.sub ( str , 1 , tolength )
-	return str .. string.rep ( "\0" , tolength-#str )
+	str = str:sub ( 1 , tolength )
+	return str .. ("\0"):rep ( tolength-#str )
 end
 
 function generatetag ( tags )	
 	local title , artist , album, year , comment , track , genre
 	
 	-- Title
-	if type( tags.title ) == "table" then 
+	if type ( tags.title ) == "table" then 
 		title = tags.title
 	else title = { "" }
 	end
@@ -140,11 +145,11 @@ function generatetag ( tags )
 	
 	do -- Artist
 		local t
-		if type( tags.artist ) == "table" then 
+		if type ( tags.artist ) == "table" then 
 			t= tags.artist
 		else t = { "" }
 		end
-		artist = string.sub ( t [ 1 ] , 1 , 30 )
+		artist = t [ 1 ]:sub ( 1 , 30 )
 		for i=2 , #t-1 do
 			if ( #artist + 3 + #t [ i ] ) > 30 then break end
 			artist = artist .. " & " .. t [ i ]
@@ -153,14 +158,14 @@ function generatetag ( tags )
 	end
 	
 	-- Album
-	if type( tags.album ) == "table" then 
+	if type ( tags.album ) == "table" then 
 		album = tags.album
 	else album = { "" }
 	end
 	album = makestring ( album [ 1 ] , 30 )
 
 	-- Year
-	if type( tags.date ) == "table" then 
+	if type ( tags.date ) == "table" then 
 		year = tags.date
 	else year = { "" }
 	end
@@ -176,14 +181,14 @@ function generatetag ( tags )
 	comment = makestring ( comment , 28 )
 
 	-- Track
-	if type( tags.track ) == "table" then 
+	if type ( tags.track ) == "table" then 
 		track = tags.tracknumber
 	else track = { "" }
 	end
-	track = string.char ( tonumber ( track [ 1 ] ) or 0 )
+	track = ( tonumber ( track [ 1 ] ) or 0 ):char ( )
 	
 	-- Genre
-	if type( tags.genre ) == "table" then 
+	if type ( tags.genre ) == "table" then 
 		genre = toid3:iconv ( tags.genre [ 1 ] )
 	else 
 		genre = ""
@@ -191,9 +196,12 @@ function generatetag ( tags )
 	do
 		local t = 12 -- "Other"
 		for i , v in ipairs ( genreindex ) do
-			if string.find ( genre:lower ( ) , string.gsub ( v:lower ( ) , "%W" , "." ) ) then t = i break end 
+			if genre:lower ( ):find ( v:lower ( ):gsub ( "%W" , "." ) ) then
+				t = i
+				break
+			end 
 		end
-		genre = string.char ( t )
+		genre = t:char ( )
 	end
 	
 	local datadiscarded = false
@@ -213,14 +221,14 @@ function generatetag ( tags )
 end
 
 function edit ( path , tags , inherit )
-	local fd , err = io.open ( path , "rb+" )
+	local fd , err = ioopen ( path , "rb+" )
 	if not fd then return ferror ( err , 3 ) end
 	
 	if inherit then 
 		local currenttags= info ( fd ) -- inherit from current data
 		for k , v in pairs ( currenttags ) do
 			for i , v in ipairs ( v ) do
-				table.insert ( tags [ k ] , v )
+				tags [ k ] [ #tags [ k ] + 1 ] = v
 			end
 		end
 	end
@@ -235,7 +243,7 @@ function edit ( path , tags , inherit )
 		fd:seek ( "end" ) -- make tag at end of file
 	end
 	local ok , err = fd:write ( id3 )
-	if not ok then return ok , fail end
+	if not ok then return ok , err end
 	fd:flush ( )
 	
 	return 

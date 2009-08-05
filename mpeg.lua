@@ -11,8 +11,10 @@
 
 require "general"
 
+local error , ipairs , require , unpack = error , ipairs , require , unpack
 local strbyte = string.byte
 local floor = math.floor
+local ioopen = io.open
 
 module ( "lomp.fileinfo.mpeg" , package.see ( lomp ) )
 
@@ -103,7 +105,7 @@ local lensideinfo = { -- [mpegversion][channels] (bytes)
 	[2.5] = { 9 , 17 }
 }
 
-function validframe ( a , b , c , d )
+local function validframe ( a , b , c , d )
 	if a ~= 255 or b < 224 
 		or bitread ( b , 4 , 5 ) == 1 -- Invalid Mpeg Version
 		or b % 8 < 2 -- bitread ( b , 2 , 3 ) == 0 -- Invalid Layer
@@ -114,7 +116,7 @@ function validframe ( a , b , c , d )
 	else return true end
 end
 
-function getframelength ( layer , samplerate , spf , bitrate , padded )
+local function getframelength ( layer , samplerate , spf , bitrate , padded )
 	if layer == 1 then
 		return ( floor ( 12 * bitrate / samplerate ) + padded ) * 4
 	else
@@ -122,7 +124,7 @@ function getframelength ( layer , samplerate , spf , bitrate , padded )
 	end
 end
 
-function findframesync ( fd )
+local function findframesync ( fd )
 	local step = 2048
 	local a , b , c , d
 	local str = fd:read ( 4 )
@@ -145,7 +147,7 @@ function findframesync ( fd )
 end
 
 function info ( item )
-	local fd = io.open ( item.path , "rb" )
+	local fd = ioopen ( item.path , "rb" )
 	if not fd then return false , "Could not open file" end
 	item = item or { }
 	
@@ -206,7 +208,8 @@ function info ( item )
 		end
 	end
 	
-	extra = item.extra
+	local extra = item.extra
+	
 	local filesize = fd:seek ( "end" )
 	fd:seek ( "set" , tagatsof )
 
@@ -314,8 +317,7 @@ function info ( item )
 	if frames and samplerate then
 		length = frames * spf / samplerate
 		bps = bytes*8/(length)
-		print("XING" , guesslength , length )
-		error()
+		error("XING" , guesslength , length )
 	elseif item.tags and item.tags.length then
 		length = item.tags.length [ 1 ]
 	end
@@ -398,7 +400,7 @@ function info ( item )
 	extra.channelmode = channelmode 
 	extra.channelmodestr = channelmodes [ channelmode ]
 	extra.copyright = copyright
-	extra.original = o
+	extra.original = original
 	extra.emphasis = emph
 	extra.emphasisstr = emphasis [ emph ]
 	extra.length = length

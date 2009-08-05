@@ -11,8 +11,9 @@
 
 require "general"
 
-local strbyte = string.byte
-local strchar = string.char
+local require , unpack = require , unpack
+local strbyte , strchar = string.byte , string.char
+local ioopen = io.open
 
 module ( "lomp.fileinfo.wavpack" , package.see ( lomp ) )
 
@@ -20,14 +21,14 @@ _NAME = "Wavpack file format library"
 -- Specifications:
  -- http://www.wavpack.com/file_format.txt
 
-require "vstruct"
+local vstruct = require "vstruct"
 
 require "modules.fileinfo.APE"
 require "modules.fileinfo.tagfrompath"
 
 local sample_rates = {	6000 , 	8000 , 	9600 , 	11025 , 	12000 , 	16000 , 	22050 , 	24000 , 	32000 , 	44100 ,	48000 , 	64000 , 	88200 , 	96000 , 	192000 }
 
-function intflags ( flags , i , j )
+local function intflags ( flags , i , j )
 	j = j or i
 	local result = 0
 	while j >= i do
@@ -39,7 +40,7 @@ function intflags ( flags , i , j )
 end
 	
 function info ( item )
-	local fd = io.open ( item.path , "rb" )
+	local fd = ioopen ( item.path , "rb" )
 	if not fd then return false , "Could not open file" end
 	item = item or { }
 	
@@ -88,7 +89,7 @@ function info ( item )
 	local t = vstruct.unpack ( "< size:u4 version:u2 track_no:u1 index_no:u1 total_samples:u4 block_index:u4 block_samples:u4 flags:m4 crc:u4" , fd )
 
 	item.extra = {
-		version = version ;
+		version = t.version ;
 		totalsamples = t.total_samples ;
 		bitspersample = ( intflags ( t.flags , 1 , 2 ) + 1 ) * 8 ;
 		stereo = not t.flags [ 3 ] ;

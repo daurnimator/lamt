@@ -11,6 +11,11 @@
 
 require "general"
 
+local ipairs , pairs , pcall , require , tostring , type = ipairs , pairs , pcall , require , tostring , type
+local ioopen = io.open
+local osremove , osrename = os.remove , os.rename
+local tblappend , tblconcat , tblinherit = table.append , table.concat , table.inherit
+
 module ( "lomp.fileinfo.APE" , package.see ( lomp ) )
 
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
@@ -49,7 +54,7 @@ function readheader ( fd )
 		local h = vstruct.unpack ( "< version:u4 size:u4 items:u4 < flags:m4 x8" , fd )
 		h.start = offset
 		if h.version >= 2000 then
-			table.inherit ( h , readflags ( h.flags ) , true ) 
+			tblinherit ( h , readflags ( h.flags ) , true ) 
 		else -- Version 1
 			h.isfooter = true
 			h.hasfooter = true
@@ -100,7 +105,7 @@ local decode = {
 	[ "publisher" ] = "utf-8" ,
 	[ "conductor" ] = "utf-8" ,	
 	[ "track" ] = function ( str , version )
-		local s , e = string.find ( str , "/" , 1 , true )
+		local s , e = str:find ( "/" , 1 , true )
 		local track = s and str:sub ( 1 , s - 1 ) or str
 		local tot = e and str:sub ( e + 1 ) or ""
 		
@@ -134,7 +139,7 @@ local decode = {
 	[ "introplay" ] = "ignore" ,
 	[ "dummy" ] = "ignore" ,
 	[ "disc" ] = function ( str , version )
-		local s , e = string.find ( str , "/" , 1 , true )
+		local s , e = str:find ( "/" , 1 , true )
 		local disc = s and str:sub ( 1 , s - 1 ) or str
 		local tot = e and str:sub ( e + 1 ) or ""
 		
@@ -164,7 +169,7 @@ local function interpretitem ( key , flags , val )
 	local result = { }
 	for i , v in ipairs ( vals ) do
 		v = v:trim ( )
-		table.inherit ( result , func ( v , version ) , false )
+		tblinherit ( result , func ( v , version ) , false )
 	end
 	
 	return result
@@ -187,7 +192,7 @@ function info ( fd , location , header )
 	
 	for i = 1 , header.items do
 		if fd:seek ( "cur" ) >= ( location + header.size ) then break end
-		table.inherit ( tags , interpretitem ( readitem ( fd , header ) ) , true )
+		tblinherit ( tags , interpretitem ( readitem ( fd , header ) ) , true )
 	end
 	
 	return tags , extra
@@ -213,7 +218,7 @@ function find ( fd )
 	return false
 end
 
-function generateutf8item ( key , tbl )
+local function generateutf8item ( key , tbl )
 	local flags = { false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false }
 	
 	-- Remove duplicates entries
@@ -228,12 +233,12 @@ function generateutf8item ( key , tbl )
 		end
 	end
 	
-	local str = table.concat ( newtable , "\0" )
+	local str = tblconcat ( newtable , "\0" )
 	return { flags = flags , value = str }
 end
 
 function edit ( path , tags , inherit )
-	local fd , err = io.open ( path , "rb+" )
+	local fd , err = ioopen ( path , "rb+" )
 	if not fd then return ferror ( err , 3 ) end
 	
 	local offset , h = find ( fd )
@@ -244,7 +249,7 @@ function edit ( path , tags , inherit )
 		if not newitems [ k ] then
 			newitems [ k ] = v
 		else
-			table.append ( newitems [ k ] , v )
+			tblappend ( newitems [ k ] , v )
 		end
 	end
 	
@@ -257,7 +262,7 @@ function edit ( path , tags , inherit )
 					if not newitems [ k ] then
 						newitems [ k ] = v
 					else
-						table.append ( newitems [ k ] , v )
+						tblappend ( newitems [ k ] , v )
 					end
 				end
 			else
@@ -299,17 +304,17 @@ function edit ( path , tags , inherit )
 	end
 	
 	if cutoffstart > 0 or cutoffend > 0 then
-		local dir = string.match ( path , "(.*/)" ) or  "./"
-		local filename = string.match ( path , "([^/]+)$" )
+		local dir = path:match ( "(.*/)" ) or  "./"
+		local filename = path:match ( "([^/]+)$" )
 			
 		-- Make a tmpfile
 		local tmpfilename , wd , err
 		for lim = 1 ,  20 do 
 			tmpfilename = dir .. filename .. ".tmp" .. lim
 			local td
-			td , err = io.open ( tmpfilename , "r" )
+			td , err = ioopen ( tmpfilename , "r" )
 			if not td and err:find ( "No such file or directory" ) then -- Found an empty file
-				wd , err = io.open ( tmpfilename , "wb" )
+				wd , err = ioopen ( tmpfilename , "wb" )
 				break
 			end
 		end
@@ -331,9 +336,9 @@ function edit ( path , tags , inherit )
 		
 		wd:flush ( )
 		wd:close ( )
-		os.remove ( path ) 
-		os.rename ( tmpfilename , path )
-		os.remove ( tmpfilename ) 
+		osremove ( path ) 
+		osrename ( tmpfilename , path )
+		osremove ( tmpfilename ) 
 	else
 		fd:seek ( "set" , offset )
 		fd:write ( tag )
