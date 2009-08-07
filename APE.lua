@@ -19,8 +19,8 @@ local tblappend , tblconcat , tblinherit = table.append , table.concat , table.i
 module ( "lomp.fileinfo.APE" , package.see ( lomp ) )
 
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
-require "vstruct"
-require "iconv"
+local vstruct = require "vstruct"
+local iconv = require "iconv"
 
 _NAME = "APEv1 and APEv2 tag reader/writer"
 -- Specifications:

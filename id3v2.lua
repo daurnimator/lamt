@@ -16,6 +16,7 @@ local ioopen , iostderr = io.open , io.stderr
 local osremove , osrename = os.remove , os.rename
 local tblconcat , tblinherit = table.concat , table.inherit
 local strexplode = string.explode
+local ascii , utf8 = ascii , utf8
 
 module ( "lomp.fileinfo.id3v2" , package.see ( lomp ) )
 
