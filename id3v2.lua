@@ -153,7 +153,7 @@ local function interpretdatestamp ( str )
 	str = str:trim ( )
 	
 	local tbl = { }
-	local d , t = unpack ( strexplode ( str , "T" ) )
+	local d , t = unpack ( strexplode ( str , "T" , true , true ) )
 	local s , e , y = d:find ( "^%s*(%d%d%d%d)%f[^%d]" )
 	if y then
 		tbl.year = y
@@ -403,7 +403,7 @@ local function readtextframe ( str )
 	local encoding = encodings [ str:byte ( 1 , 1 ) ]
 	local text = str:sub ( 2 )
 	local terminator = ( "\0" ):rep ( encoding.nulls )
-	local st = strexplode ( text , terminator , true )
+	local st = strexplode ( text , terminator , true , true )
 	local r , index = { } , 0
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
@@ -549,8 +549,8 @@ local framedecode = {
 		for i , v in ipairs ( t) do
 			if v == "RX" then t [ i ] = "Remix"
 			elseif v == "CR" then t [ i ] = "Cover" 
-			elseif tonumber ( v ) then
-				t [ i ] = genrelist [ tonumber ( v ) ]
+			elseif #v == 1 then
+				t [ i ] = genrelist [ v:byte ( ) ]
 			else
 				t [ i ] = v
 			end
@@ -652,7 +652,7 @@ local framedecode = {
 		local field = ascii ( str:sub ( 2 , e - 1 ) , encoding.name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
-		local st = strexplode ( text , terminator , true )
+		local st = strexplode ( text , terminator , true , true )
 		
 		local r = { }
 		for i , v in ipairs ( st ) do
