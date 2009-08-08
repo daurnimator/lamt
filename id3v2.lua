@@ -16,7 +16,6 @@ local ioopen , iostderr = io.open , io.stderr
 local osremove , osrename = os.remove , os.rename
 local tblconcat , tblinherit = table.concat , table.inherit
 local strexplode = string.explode
-local ascii , utf8 = ascii , utf8
 
 module ( "lomp.fileinfo.id3v2" , package.see ( lomp ) )
 
@@ -190,7 +189,7 @@ local frameencode = {
 		local t = { }
 		for i , v in ipairs ( tags [ "unique file id" ] or { } ) do
 			local ownerid = ( tags [ "owner id" ] or { } ) [ i ] or "http://www.id3.org/dummy/ufid.html"
-			t [ i ] = ascii ( ownerid , "UTF-8" ) .. "\0" .. v
+			t [ i ] = ownerid:ascii ( "UTF-8" ) .. "\0" .. v
 		end
 		return { { id [ id3version ] , t } } , false
 	end ,
@@ -282,7 +281,7 @@ local frameencode = {
 		else 
 			local year , date , time , recording , datadiscarded = { encoding = 0 } , { encoding = 0 } , { encoding = 0 } , { } , false
 			for i , v in ipairs ( tags [ "date" ] ) do
-				local d = interpretdatestamp ( ascii ( v , "UTF-16" ) )
+				local d = interpretdatestamp ( v:ascii ( "UTF-16" ) )
 				year [ #year + 1 ] = d.year
 				date [ #date + 1 ] = d.month and ( ( d.day or "00" ) .. d.month )
 				time [ #time + 1 ] = d.hour and d.hour .. ( d.minute or "00" )
@@ -349,8 +348,8 @@ local frameencode = {
 		local language = "eng" -- 3 character language
 		local t = { }
 		for i , v in ipairs ( tags [ "comment" ] ) do
-			local shortdescription = utf16 ( i ) -- UTF-16 string
-			t [ #t + 1 ] = e:char ( ) .. language .. shortdescription .. ( "\0" ):rep ( encodings [ e ].nulls ) .. utf16 ( v , "UTF-8" )
+			local shortdescription = i:utf16 ( ) -- UTF-16 string
+			t [ #t + 1 ] = e:char ( ) .. language .. shortdescription .. ( "\0" ):rep ( encodings [ e ].nulls ) .. v:utf16 ( "UTF-8" )
 		end
 		local id = { false , "COM" , "COMM" , "COMM" }
 		return { { id [ id3version ] , t } } , false
@@ -379,7 +378,7 @@ local frameencode = {
 	[ "terms of use" ] = function ( tags , id3version )
 		local e = 1 -- Encoding, 1 is UTF-16
 		local language = "eng" -- 3 character language
-		local s = e:char ( ) .. language .. utf16 ( tags [ "terms of use" ] [ 1 ] , "UTF-8")
+		local s = e:char ( ) .. language .. tags [ "terms of use" ] [ 1 ]:utf16 ( "UTF-8")
 		
 		local id = { false , "TXX" , "USER" , "USER" }
 		return { id [ id3version ] , { s } } , toboolean ( tags [ "terms of use" ] [ 2 ] )
@@ -408,7 +407,7 @@ local function readtextframe ( str )
 	for i , v in ipairs ( st ) do
 		if #v ~= 0 then
 			index = index + 1
-			r [ index ] = utf8 ( v , encoding.name )
+			r [ index ] = v:utf8 ( encoding.name )
 		end
 	end
 	return r
@@ -429,7 +428,7 @@ local ignoreframes = setmetatable (
 local framedecode = {
 	["UFID"] = function ( str )
 			local t = vstruct.unpack ( "> ownerid:z uniquefileid:s64" , str )
-			return { [ "owner id" ] = { utf8 ( t.ownerid , "ISO-8859-1" ) } , { [ "unique file id" ] = t.uniquefileid  } }
+			return { [ "owner id" ] = { t.ownerid:utf8 ( "ISO-8859-1" ) } , { [ "unique file id" ] = t.uniquefileid  } }
 		end ,
 		
 	-- TEXT fields
@@ -546,11 +545,19 @@ local framedecode = {
 	end ,
 	["TCON"] = function ( str ) -- Content type
 		local t = readtextframe ( str )
-		for i , v in ipairs ( t) do
-			if v == "RX" then t [ i ] = "Remix"
-			elseif v == "CR" then t [ i ] = "Cover" 
-			elseif #v == 1 then
-				t [ i ] = genrelist [ v:byte ( ) ]
+		for i , v in ipairs ( t ) do
+			if v:sub ( 1 , 1 ) == "(" then
+				for g , refinement in v:gmatch ( "%(([^)]+)%)([^(]*)" ) do
+					if g:sub ( 1 , 1 ) == "(" then
+						t [ i ] = v:sub ( 2 ) -- Strip first character
+					elseif g == "RX" then t [ i ] = "Remix"
+					elseif g == "CR" then t [ i ] = "Cover"
+					elseif tonumber ( g ) then t [ i ] = genrelist [ tonumber ( g ) ]
+					end
+					if #refinement > 0 then
+						-- TODO: something?
+					end
+				end
 			else
 				t [ i ] = v
 			end
@@ -649,7 +656,7 @@ local framedecode = {
 		local terminator = ( "\0" ):rep (  encoding.nulls )
 		local s , e = str:find ( terminator , 2 , true )
 		if not s then return false end
-		local field = ascii ( str:sub ( 2 , e - 1 ) , encoding.name ):lower ( )
+		local field = str:sub ( 2 , e - 1 ):ascii ( encoding.name ):lower ( )
 		local text = str:sub ( e + 1 )
 		
 		local st = strexplode ( text , terminator , true , true )
@@ -657,7 +664,7 @@ local framedecode = {
 		local r = { }
 		for i , v in ipairs ( st ) do
 			if #v ~= 0 then
-				r [ #r + 1 ] = utf8 ( v , encoding.name )
+				r [ #r + 1 ] = v:utf8 ( encoding.name )
 			end
 		end
 		return { [ field ] =  r }
@@ -693,7 +700,7 @@ local framedecode = {
 		local terminator = ( "\0" ):rep ( encoding.nulls )
 		local s , e = str:find ( terminator , 2 , true )
 		if not s then return false end
-		local field = ascii ( str:sub ( 2 , e - 1 ) , encoding.name )
+		local field = str:sub ( 2 , e - 1 ):ascii ( encoding.name )
 		local url = str:sub ( e + 1 )
 		
 		if #field == 0 or not field:find ( "%w" )  then 
@@ -747,8 +754,7 @@ local framedecode = {
 		local s , e = str:find ( terminator , 5 , true )
 		if not s then return false end
 		local description = str:sub ( 5 , e - 1 )
-		local text = str:sub ( e + 1 )
-		text = utf8 ( text , encoding.name )
+		local text = str:sub ( e + 1 ):utf8 ( encoding.name )
 		-- TODO: Can we do anything with language or description?
 		return { [ "comment" ] = { text } }
 	end ,
@@ -1108,14 +1114,14 @@ end
 local function genWXXXframe ( humanname , v , id3version )
 	local e = v.encoding or 1 -- Encoding, 1 is UTF-16
 	humanname = humanname:match ( "(.*)url" ) or humanname
-	local s = e:char ( ) .. utf16 ( humanname , "ISO-8859-1" ) .. ( "\0" ):rep ( encodings [ e ].nulls ) .. ascii ( v [ 1 ] or "" , "UTF-8" )
+	local s = e:char ( ) .. humanname:utf16 ( "ISO-8859-1" ) .. ( "\0" ):rep ( encodings [ e ].nulls ) .. ( v [ 1 ] or "" ):ascii ( "UTF-8" )
 	return { id = ( ( id3version == 2 ) and "WXX" ) or "WXXX" , contents = s } , ( toboolean ( v [ 2 ] ) )
 end
 local function genTXXXframe ( humanname , v , id3version )
 	local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-	local s = e:char ( ) .. utf16 ( humanname , "ISO-8859-1" ) .. ( "\0" ):rep ( encodings [ e ].nulls ) .. utf16 ( v [ 1 ] , "UTF-8" )
+	local s = e:char ( ) .. humanname:utf16 ( "ISO-8859-1" ) .. ( "\0" ):rep ( encodings [ e ].nulls ) .. v [ 1 ]:utf16 ( "UTF-8" )
 	for i =2 , #v do
-		s = s .. ( "\0" ):rep ( encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+		s = s .. ( "\0" ):rep ( encodings [ e ].nulls ) .. v [ i ]:utf16 ( "UTF-8" )
 	end
 	return { id = ( ( id3version == 2 ) and "TXX" ) or "TXXX" , contents = s }
 end
@@ -1129,9 +1135,9 @@ end
 				return genTXXXframe ( humanname , v , id3version )
 			else
 				local e = v.encoding or 1 -- Encoding, 1 is UTF-16
-				local s = e:char ( ) .. utf16 ( v [ 1 ] , "UTF-8" )
+				local s = e:char ( ) .. v [ 1 ]:utf16 ( "UTF-8" )
 				for i =2 , #v do
-					s = s .. ( "\0" ):rep ( encodings [ e ].nulls ) .. utf16 ( v [ i ] , "UTF-8" )
+					s = s .. ( "\0" ):rep ( encodings [ e ].nulls ) .. v [ i ]:utf16 ( "UTF-8" )
 				end
 				return { id = r , contents = s } , datadiscarded
 			end
@@ -1139,7 +1145,7 @@ end
 			if r == "WXXX" or r == "WXX" then -- Standard defined Link field
 				genWXXXframe ( humanname , v , id3version )
 			else
-				return { id = r , contents = ascii ( v [ 1 ] , "UTF-8" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
+				return { id = r , contents = v [ 1 ]:ascii ( "UTF-8" ) } , ( v [ 2 ] or datadiscarded ) -- Only allowed one url per field
 			end
 		else -- Assume binary data
 			for i , bin in ipairs ( v ) do
@@ -1172,7 +1178,7 @@ local function clashfunc ( tbl , newvalue , overwrite , tblnodupes )
 			local encoding = encodings [ str:byte ( 1 , 1 ) ]
 			local terminator = ( "\0" ):rep ( encoding.nulls )
 			local s , e = str:find ( terminator , 2 , true )
-			local description = ascii ( str:sub ( 2 , e - 1 )  , encoding.name ):lower ( )
+			local description = str:sub ( 2 , e - 1 ):ascii ( encoding.name ):lower ( )
 			return description
 		end ,
 		enc_lang_encdesc = function ( str ) -- Unique language and description

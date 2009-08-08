@@ -73,7 +73,7 @@ local decodeformats = {
 		local result = { }
 		for i , v in ipairs ( tbl ) do
 			if version == 1000 then
-				v = utf8 ( v , "ISO-8859-1" ) -- Convert from ascii: neccessary???
+				v = v:utf8 ( "ISO-8859-1" ) -- Convert from ascii: neccessary???
 			end
 			v = v:trim ( )
 			result [ #result + 1 ] = v
