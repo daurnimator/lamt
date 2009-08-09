@@ -853,7 +853,9 @@ do -- ID3v2.3 frames (Older frames)
 		for i , v in ipairs ( readtextframe ( str ) ) do
 			local day = twodigit ( v:sub ( v , 1 , 2 ) )
 			local month = twodigit ( v:sub ( 3 , 4 ) )
-			t [ #t + 1 ] = month .. "-" .. day
+			if day and month then
+				t [ #t + 1 ] = month .. "-" .. day
+			end
 		end
 		return { [ "date" ] = t }
 	end
