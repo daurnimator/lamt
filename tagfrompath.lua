@@ -9,30 +9,33 @@
 	You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ]]
 
+local ipairs = ipairs
+
 module ( "lomp.fileinfo.tagfrompath" , package.see ( lomp ) )
 
-function info ( path , format , donotescapepattern )
-	if not format then return false end
-	local subs = {
-		["album artist"] = "([^/]+)" ,
-		["artist"] = "([^/]+)" ,
-		["album"] = "([^/]+)" ,
-		["year"] = "(%d%d%d%d)" ,
-		["track"] = "(%d+)" ,
-		["title"] = "([^/]+)" ,
-		["release"] = "([^/]+)" ,
-	}
-	local a = { }	
-	local pattern = format 
-	if not donotescapepattern then pattern = string.gsub ( pattern , "[%%%.%^%$%+%*%[%]%-%(%)]" , function ( str ) return "%" .. str end ) end-- Escape any characters that may need it except "?"
-	pattern = string.gsub ( pattern , "//_//" , "[^/]-" ) -- Junk operator
-	pattern = string.gsub ( pattern , "//([^/]-)//" , function ( tag ) 
-											tag = string.lower ( tag ) 
-											a [ #a + 1 ] = tag 
-											return subs [ tag ] 
-										end )
+local subs = {
+	["album artist"] = "([^/]+)" ,
+	["artist"] = "([^/]+)" ,
+	["album"] = "([^/]+)" ,
+	["year"] = "(%d%d%d%d)" ,
+	["track"] = "(%d+)" ,
+	["title"] = "([^/]+)" ,
+	["release"] = "([^/]+)" ,
+}
+
+function info ( path , pattern , donotescapepattern )
+	if not pattern then return false end
+	local a = { }
+	if not donotescapepattern then pattern = pattern:gsub ( "[%%%.%^%$%+%*%[%]%-%(%)]" , function ( str ) return "%" .. str end ) end-- Escape any characters that may need it except "?"
+	pattern = pattern:gsub ( "//_//" , "[^/]-" ) -- Junk operator
+	pattern = pattern:gsub ( "//([^/]-)//" , 
+		function ( tag ) 
+			tag = tag:lower ( ) 
+			a [ #a + 1 ] = tag 
+			return subs [ tag ] 
+		end )
 	pattern = pattern .. "%.[^/]-$" -- extension
-	local r = { string.match ( path , pattern ) }
+	local r = { path:match ( pattern ) }
 	
 	local t = { }
 	for i , v in ipairs ( a ) do

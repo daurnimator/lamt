@@ -30,7 +30,7 @@ function info ( fd , item )
 	for i = 1 , vstruct.unpack ( "< u4" , fd ) [ 1 ] do -- 4 byte interger indicating how many comments.
 		local line = vstruct.unpack ( "< c4" , fd ) [ 1 ]
 		local fieldname , value = line:match ( "([^=]+)=(.*)" )
-		fieldname = fieldname:lowe ( )
+		fieldname = fieldname:lower ( )
 		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
 		item.tags [ fieldname ] [ #item.tags [ fieldname ] + 1 ] = value
 	end
@@ -53,3 +53,5 @@ function generatetag ( tags )
 	
 	return vstruct.pack ( vstructstring , vstructdata )
 end
+
+return _M

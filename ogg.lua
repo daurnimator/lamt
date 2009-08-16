@@ -16,9 +16,9 @@ local ioopen = io.open
 
 module ( "lomp.fileinfo.ogg" , package.see ( lomp ) )
 
-require "vstruct"
+local vstruct = require "vstruct"
 
-require "modules.fileinfo.vorbiscomments"
+local vorbiscomments = require "modules.fileinfo.vorbiscomments"
 
 local O , g , S = ( "OgS" ):byte ( 1 , 3 )
 local function validpage ( a , b , c , d )
@@ -114,7 +114,7 @@ function info ( item )
 					local sd = vstruct.cursor ( segments [ 1 ] )
 					sd:seek  ( "set" , 7 )
 					item.tagtype = "vorbiscomment"
-					fileinfo.vorbiscomments.info ( sd , item )
+					vorbiscomments.info ( sd , item )
 				elseif packet_type == 5 then -- Setup header
 				else
 				end

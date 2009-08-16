@@ -9,11 +9,8 @@
 	You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ]]
 
-module ( "lomp.fileinfo.genrelist" )
-
-_NAME = "ID3v1 genre index"
-
-genrelist = {
+local genrelist = {
+	_NAME = "ID3v1 genre index" ,
 	[0] = "Blues" ,
 	[1] = "Classic Rock" ,
 	[2] = "Country" ,
@@ -142,5 +139,7 @@ genrelist = {
 	[124] = "Euro-House" ,
 	[125] = "Dance Hall"
 }
+
+lomp.fileinfo.genrelist = genrelist
 
 return genrelist
