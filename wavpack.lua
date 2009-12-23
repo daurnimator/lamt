@@ -26,7 +26,7 @@ local vstruct = require "vstruct"
 require "modules.fileinfo.APE"
 require "modules.fileinfo.tagfrompath"
 
-local sample_rates = {	6000 , 	8000 , 	9600 , 	11025 , 	12000 , 	16000 , 	22050 , 	24000 , 	32000 , 	44100 ,	48000 , 	64000 , 	88200 , 	96000 , 	192000 }
+local sample_rates = { [0]=6000 , 	8000 , 	9600 , 	11025 , 	12000 , 	16000 , 	22050 , 	24000 , 	32000 , 	44100 ,	48000 , 	64000 , 	88200 , 	96000 , 	192000 }
 
 local function intflags ( flags , i , j )
 	j = j or i
@@ -86,39 +86,43 @@ function info ( item )
 		i = i + 1
 	end
 	
-	local t = vstruct.unpack ( "< size:u4 version:u2 track_no:u1 index_no:u1 total_samples:u4 block_index:u4 block_samples:u4 flags:m4 crc:u4" , fd )
-
-	item.extra = {
-		version = t.version ;
-		totalsamples = t.total_samples ;
-		bitspersample = ( intflags ( t.flags , 1 , 2 ) + 1 ) * 8 ;
-		stereo = not t.flags [ 3 ] ;
-		hybrid = t.flags [ 4 ] ;
-		jointstereo = t.flags [ 5 ] ;
-		independantchanels = not t.flags [ 6 ] ;
-		floatingpoint = t.flags [ 7 ] ;
-	}
+	local t = vstruct.unpack ( [=[ <
+		cksize:u4 version:u2 track_no:u1 index_no:u1 totalsamples:u4 block_index:u4 block_samples:u4
+		[ 4 | bytespersample:u2 mono:b1 hybrid:b1 jointstereo:b1 cross_channel_decorrelation:b1 hybrid_noise_shaping:b1 floating_point_data:b1 
+			extended_size_integers:b1 hybrid_mode_parameters_control_bitrate:b1 hybrid_noise_balanced:b1 initial_block:b1 final_block:b1
+			leftshift:u5 maximum_magnitude:u5 sampleratecode:u4 x2 useIIR:b1 falsestereo:m1 x1]
+		crc:u4]=] , fd )
+	t.bytespersample = t.bytespersample + 1
 	
-	local sampleratecode = intflags ( t.flags , 24 , 27 ) + 1
-	if sampleratecode ~= 16 then
-		item.extra.samplerate = sample_rates [ sampleratecode ] ;
+	t.bitspersample = t.bytespersample * 8
+	t.stereo = not t.mono
+	t.lossless = not t.hybrid
+	t.independantchanels = not t.cross_channel_decorrelation
+	t.integer_data = not t.floating_point_data
+	t.hybrid_mode_parameters_control_noise_level = not t.hybrid_mode_parameters_control_bitrate
+	if t.sampleratecode ~= 15 then -- (1111 = unknown/custom)
+		t.samplerate = sample_rates [ sampleratecode ]
+	end
+	
+	--[[ TODO: read metadata sub blocks
+	local b = vstruct.unpack ( [=[ <
+		[ 1 |  ]
+		
+	]=] , fd ) --]]
+	
+	if t.block_index ~= 0 or t.totalsamples == 2^32-1 or not t.samplerate then -- Need to find length the hard way
+		-- TODO: traverse file
+		return false
 	else
-		-- TODO: read metadata sub blocks
+		item.length = t.totalsamples / t.samplerate
+		item.samplerate = t.samplerate
+		item.bitrate = 	t.samplerate*t.bitspersample
 	end
-	
-	if item.extra.hybrid then
-		item.extra.hybridnoiseshaping = t.flags [ 7 ]
-		item.extra.hybridparamscontrolbitrate = t.flags [ 10 ]
-	end
-	
-	item.length = item.extra.totalsamples / item.extra.samplerate
-	item.channels = item.extra.channels
-	item.samplerate = item.extra.samplerate
-	item.bitrate = 	item.extra.samplerate*item.extra.bitspersample
+	item.channels = t.channels
 	item.filesize = fd:seek ( "end" )
 	
 	fd:close ( )
-	
+	item.extra = t
 	return item
 end
 
