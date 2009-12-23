@@ -29,86 +29,80 @@ function find ( fd )
 	end
 end
 
+local blockreaders = {
+	[ 0 ] = function ( fd , length , item ) -- STREAMINFO
+		local STREAMINFO = vstruct.unpack ( [=[>
+			minblocksize:u2 maxblocksize:u2 minframesize:u3 maxframesize:u3
+			[ 8 | samplerate:u20 channels:u3 bitspersample:u5 totalsamples:u36 ]
+			md5:u16 
+		]=] , item.extra )
+		item.length = STREAMINFO.totalsamples / STREAMINFO.samplerate
+		item.channels = STREAMINFO.channels
+		item.samplerate = STREAMINFO.samplerate
+		item.bitrate = 	STREAMINFO.samplerate*STREAMINFO.bitspersample
+	end ,
+	[ 1 ] = function ( fd , length , item ) -- PADDING
+		local e = item.extra
+		e.padding = e.padding or { }
+		e.padding [ #e.padding + 1 ] = { start = fd:seek ( ) ; length = length ; }
+	end ,
+	[ 2 ] = function ( fd , length , item ) -- APPLICATION
+		local e = item.extra
+		e.applications = e.applications or { }
+		e.applications [ #e.applications + 1 ] = vstruct.unpack ( "> appID:u4 appdata:s".. length , fd )
+	end ,
+	--[[[ 3 ] = function ( fd , length , item ) -- SEEKTABLE (we can't do anything with this)
+	end ,--]]
+	[ 4 ] = function ( fd , length , item ) -- VORBIS_COMMENT
+		item.tagtype = "vorbiscomment"
+		item.tags = { }
+		item.extra.startvorbis = fd:seek ( "cur" )
+		
+		fileinfo.vorbiscomments.info ( fd , item )
+	end ,
+	[ 5 ] = function ( fd , length , item ) -- CUESHEET
+		local e = item.extra
+		e.cuesheet = e.cuesheet or { }
+		e.cuesheet [ #e.cuesheet + 1 ] = vstruct.unpack ( [=[>
+			catalognumber:s128 leadinsamples:u8 [ 1 | cd:b1 x7] x258 tracks:u1
+		]=] , fd )
+		-- TODO: read CUESHEET_TRACK block
+	end ,
+	[ 6 ] = function ( fd , length , item ) -- PICTURE
+		local e = item.extra
+		e.picture = e.picture or { }
+		e.picture [ #e.picture + 1 ] = vstruct.unpack ( [=[>
+			type:u4 mimetype:c4 desciption:c4 width:u4 height:u4 depth:u4 colours:u4 data:c4
+		]=] , fd )
+	end ,
+}
+
 function info ( item )
-	local fd = ioopen ( item.path , "rb" )
-	if not fd then return false , "Could not open file" end
-	item = item or { }
-	fd:seek ( "set" ) -- Rewind file to start
+	local fd , err = ioopen ( item.path , "rb" )
+	if not fd then return false , "Could not open file:" .. err end
+	
 	-- Format info found at http://flac.sourceforge.net/format.html
 	if fd:read ( 4 ) == "fLaC" then 
 		item.format = "flac"
-		item.extra = { } 
+		item.extra = { }
 		
-		local t
 		repeat
-			t = vstruct.unpack ( "< m1 > u3" , fd )
-			
-			local lastmetadatablock = vstruct.implode { unpack ( t [ 1 ] , 8 , 8 ) }
-			local blocktype = vstruct.implode { unpack ( t [ 1 ] , 1 , 7 ) }		
-			local blocklength = t [ 2 ] -- Is in bytes
-			
-			--print ( lastmetadatablock , blocktype , blocklength )
-			
-			if blocktype == 0 then -- Stream info
-				t = vstruct.unpack ( "> u2 u2 u3 u3 m8 u16" , fd )
-				item.extra.minblocksize = t [ 1 ]
-				item.extra.maxblocksize = t [ 2 ]
-				item.extra.minframesize = t [ 3 ]
-				item.extra.maxframesize = t [ 4 ]
-				item.extra.samplerate = vstruct.implode { unpack ( t [ 5 ] , 45 , 64 ) }
-				item.extra.channels = vstruct.implode { unpack ( t [ 5 ] , 42 , 44 ) } + 1
-				item.extra.bitspersample = vstruct.implode { unpack ( t [ 5 ] , 37 , 41 ) } + 1
-				item.extra.totalsamples = vstruct.implode { unpack ( t [ 5 ] , 1 , 36 ) }
-				item.extra.md5rawaudio = t [ 6 ]
-			elseif blocktype == 1 then -- Padding
-				item.extra.padding = item.extra.padding or { }
-				item.extra.padding [ #item.extra.padding + 1 ] = { start = fd:seek ( ) ; length = blocklength ; }
-				t = vstruct.unpack ( "> x" .. blocklength , fd )
-			elseif blocktype == 2 then -- Application
-				t = vstruct.unpack ( "> u4 s" .. ( blocklength - 4 ) , fd )
-				item.extra.applications = item.extra.applications or { }
-				item.extra.applications [ #item.extra.applications + 1 ] = { appID = t [ 1 ] , appdata = t [ 2 ] }
-			elseif blocktype == 3 then -- Seektable
-				t = vstruct.unpack ( "> x" .. blocklength , fd ) -- We don't deal with seektables, skip over it
-			elseif blocktype == 4 then
-				item.tagtype = "vorbiscomment"
-				item.tags = { }
-				item.extra.startvorbis = fd:seek ( ) - 4
-				
-				fileinfo.vorbiscomments.info ( fd , item )
-				
-			elseif blocktype == 5 then -- Cuesheet
-				t = vstruct.unpack ( "> s128 u8 x259 x1 x" .. ( blocklength - ( 128 + 8 + 259 + 1 ) ) , fd ) -- cbf, TODO: cuesheet reading
-			elseif blocktype == 6 then -- Picture
-				t = vstruct.unpack ( "> u4 u4" , fd )
-				local picturetype = t [ 1 ]
-				local mimelength = t [ 2 ]
-				t = vstruct.unpack ( "> s" .. mimelength .. "u4" , fd )
-				local mimetype = t [ 1 ]
-				local descriptionlength = t [ 2 ]
-				t = vstruct.unpack ( "> s" .. descriptionlength .. " u4 u4 u4 u4 u4" , fd )
-				local width = t [ 1 ]
-				local height = t [ 2 ]
-				local colourdepth = t [ 3 ]
-				local numberofcolours = t [ 4 ]
-				local picturelength = t [ 5 ]
-				t = vstruct.unpack ( "> s" .. picturelength , fd )
-				local picturedata = t [ 1 ]
-			end
-		until lastmetadatablock == 1
+			local METADATA_BLOCK_HEADER = vstruct.unpack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block_length:u3" , fd )
+			local offset = fd:seek ( "cur" )
+			local f = blockreaders [ METADATA_BLOCK_HEADER.block_type ] 
+			if f then f ( fd , METADATA_BLOCK_HEADER.block_length , item ) end
+			fd:seek ( "set" , offset + METADATA_BLOCK_HEADER.block_length )
+		until METADATA_BLOCK_HEADER.lastmetadatablock
+		
 		if not item.tags then
 			-- Figure out from path
 			item.tagtype = "pathderived"
 			item.tags = fileinfo.tagfrompath.info ( path , config.tagpatterns.default )
 		end
-		item.length = item.extra.totalsamples / item.extra.samplerate
-		item.channels = item.extra.channels
-		item.samplerate = item.extra.samplerate
-		item.bitrate = 	item.extra.samplerate*item.extra.bitspersample
+		
 		item.filesize = fd:seek ( "end" )
 		
 		fd:close ( )
-		
 		return item
 	else
 		-- not a flac file
@@ -120,23 +114,6 @@ end
 function write ( fd , tags )
 	local item = info ( fd )
 	
-	local vendor_string = item.extra.vendor_string or "Xiph.Org libVorbis I 20020717"
-	local vendor_length = #vendor_string
-	
-	local commentcount = 0
-	local s = ""
-	for k , v in ipairs ( tags ) do
-		for i , v in ipairs ( v ) do
-			commentcount = commentcount + 1
-			local comment = k .. "=" .. v
-			local length = #comment
-			s = s .. vstruct.pack ( "u4 s" , length , comment )
-		end
-	end
-	
-	s = vstruct.pack ( "u4 s u4" , vendor_length , vendor_string , commentcount ) .. s
-	local length = #s
-	s = vstruct.pack ( "u3" , length ) .. s
 	
 	local space_needed = #s
 	
@@ -162,12 +139,8 @@ function write ( fd , tags )
 	-- Write
 end
 
-function edit ( path , tags , inherit )
-	local fd , err = ioopen ( path , "rb+" )
-	if not fd then return ferror ( err , 3 ) end
-	
-	--write ( fd , tags )
-	
+function edit ( items , edits , inherit )
+	local vorbistag = generatetag ( items , edits , inherit )
 	-- Flac editing not ready yet
 	return false
 end

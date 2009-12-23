@@ -114,8 +114,8 @@ function info ( item )
 	return item
 end
 
-function edit ( item , inherit )
-	return fileinfo.APE.edit ( item.path , item.tags , inherit )
+function edit ( item , edits , inherit )
+	return fileinfo.APE.edit ( item.path , edits , inherit )
 end
 
 return { { "wv" } , info , edit }

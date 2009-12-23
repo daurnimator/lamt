@@ -424,6 +424,7 @@ function edit ( item , edits , inherit )
 	if item.tagtype == "id3v1" then -- ID3v1 or ID3v1.1 tag
 		return fileinfo.id3v1.edit ( item.path , edits , true )
 	elseif item.tagtype == "APE" then -- APE
+		return fileinfo.APE.edit ( item.path , edits , inherit )
 	--elseif item.tagtype == "id3v2" then -- ID3v2
 	else -- id3v2 by default
 		local overwrite

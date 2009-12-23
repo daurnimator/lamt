@@ -36,22 +36,40 @@ function info ( fd , item )
 	end
 end
 
-function generatetag ( tags )	
-	local commenttbl = { }
-	for k , v in pairs ( tags ) do
-		k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
-		for i , v in ipairs ( v ) do
-			local str = k .. "=" .. v
-			commenttbl [ #commenttbl + 1 ] = { #str , str }
+function generatetag ( item , edits , inherit )	
+	local vendor_string = item.extra.vendor_string or "Xiph.Org libVorbis I 20020717"
+	--local vendor_string = core._PROGRAM .. " " .. _NAME
+	local tbl = { vendor = vendor_string }
+	
+	-- Merge edits:
+	local comments = { }
+	if inherit then
+		for k , v in pairs ( item.tags ) do
+			k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
+			local c = comments [ k ]
+			if c then
+				for i , vv in ipairs ( v ) do
+					c [ #c + 1 ] = vv
+				end
+			else
+				comments [ k ] = v
+			end
 		end
 	end
+	for k , v in pairs ( edits ) do -- edits overwrite any old tags for the given key...
+		k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
+		comments [ k ] = v
+	end
 	
-	local vendor_string = core._PROGRAM .. " " .. _NAME
+	-- Add to vstruct data table
+	for k , v in pairs ( comments ) do
+		for i , v in ipairs ( v ) do
+			tbl [ #tbl + 1 ] = k .. "=" .. v
+		end
+	end
+	tbl.n = #tbl
 	
-	local vstructstring = "< { u4 s } u4 { " .. #commenttbl .. " * { u4 s } } "
-	local vstructdata = { { #vendor_string , vendor_string } , #commenttbl , commenttbl }
-	
-	return vstruct.pack ( vstructstring , vstructdata )
+	return vstruct.pack ( "< vendor:c4 n:u4 c4 * ".. #tbl , tbl )
 end
 
 return _M
