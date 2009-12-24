@@ -11,6 +11,8 @@
 
 require "general"
 
+local prefix = (...):match("^(.-)[^%.]*$")
+
 local require , unpack = require , unpack
 local strbyte , strchar = string.byte , string.char
 local ioopen = io.open
@@ -23,8 +25,8 @@ _NAME = "Wavpack file format library"
 
 local vstruct = require "vstruct"
 
-require "modules.fileinfo.APE"
-require "modules.fileinfo.tagfrompath"
+require ( prefix .. "APE" )
+require ( prefix .. "tagfrompath" )
 
 local sample_rates = { [0]=6000 , 	8000 , 	9600 , 	11025 , 	12000 , 	16000 , 	22050 , 	24000 , 	32000 , 	44100 ,	48000 , 	64000 , 	88200 , 	96000 , 	192000 }
 	

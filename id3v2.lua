@@ -11,6 +11,8 @@
 
 require "general"
 
+local prefix = (...):match("^(.-)[^%.]*$")
+
 local ipairs , next , pairs , pcall , require , select , setmetatable , tonumber , tostring , type , unpack = ipairs , next , pairs , pcall , require , select , setmetatable , tonumber , tostring , type , unpack
 local ioopen , iostderr = io.open , io.stderr
 local osremove , osrename = os.remove , os.rename
@@ -21,7 +23,8 @@ module ( "lomp.fileinfo.id3v2" , package.see ( lomp ) )
 
 pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 local vstruct = require "vstruct"
-local genrelist = require ( select ( 1 , ... ):match ( "(.*%.)[^.]+$" ) .. "genrelist" )
+local genrelist = require ( prefix .. "genrelist" )
+require "modules.albumart"
 
 _NAME = "ID3v2 tag reader/writer"
 -- Specifications:
@@ -61,30 +64,6 @@ local encodings = {
 	[ 1 ] = { name = "UTF-16" , nulls = "2" } , 
 	[ 2 ] = { name = "UTF-16BE" , nulls = "2" } , 
 	[ 3 ] = { name = "UTF-8" , nulls = "1" } , 
-}
-
-local picturetypes = {
-	[ 0x00 ] = "Other" ; 
-	[ 0x01 ] = "32x32 pixels 'file icon' (PNG only)" ;
-	[ 0x02 ] = "Other file icon" ;
-	[ 0x03 ] = "Cover (front)" ;
-	[ 0x04 ] = "Cover (back)" ;
-	[ 0x05 ] = "Leaflet page" ;
-	[ 0x06 ] = "Media (e.g. lable side of CD)" ;
-	[ 0x07 ] = "Lead artist/lead performer/soloist" ;
-	[ 0x08 ] = "Artist/performer" ;
-	[ 0x09 ] = "Conductor" ;
-	[ 0x0A ] = "Band/Orchestra" ;
-	[ 0x0B ] = "Composer" ;
-	[ 0x0C ] = "Lyricist/text writer" ;
-	[ 0x0D ] = "Recording Location" ;
-	[ 0x0E ] = "During recording" ;
-	[ 0x0F ] = "During performance" ;
-	[ 0x10 ] = "Movie/video screen capture" ;
-	[ 0x11 ] = "A bright coloured fish" ;
-	[ 0x12 ] = "Illustration" ;
-	[ 0x13 ] = "Band/artist logotype" ;
-	[ 0x14 ] = "Publisher/Studio logotype" ;
 }
 
 local function readheader ( fd )
@@ -772,13 +751,16 @@ local framedecode = {
 		local encoding = encodings [ str:byte ( 1 , 1 ) ]
 		local terminator = ( "\0" ):rep ( encoding.nulls )
 		local a , b , mimetype = str:find ( "([^%z]*)" , 2 )
-		local picturetype = str:byte ( b + 2 , b + 2 ) -- TODO: FIX?????
 		local s , e = str:find ( terminator , b + 3 , true )
-		local description = str:sub ( b + 3 , e - 1 )
-		local picturedata = str:sub ( e + 1 )
 		if mimetype == "-->" then updatelog ( "Id3 APIC mimetype is a link!" , 5 )
 		elseif not mimetype:find ( "/" ) then mimetype = "image/" .. mimetype end
-		picturetype = picturetypes [ picturetype ] or picturetype
+		local picture = {
+			type = str:byte ( b + 2 , b + 2 ) ,
+			mimetype = mimetype ,
+			description = str:sub ( b + 3 , e - 1 ):utf8 ( encoding.name ) ,
+			data = str:sub ( e + 1 )
+		}
+		lomp.albumart.processapic ( picture )
 		-- TODO: use pictures
 	end ,
 	

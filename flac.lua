@@ -11,6 +11,8 @@
 
 require "general"
 
+local prefix = (...):match("^(.-)[^%.]*$")
+
 local ipairs , require , type , unpack = ipairs , require , type , unpack
 local ioopen = io.open
 
@@ -18,7 +20,8 @@ module ( "lomp.fileinfo.flac" , package.see ( lomp ) )
 
 local vstruct = require "vstruct"
 
-require "modules.fileinfo.vorbiscomments"
+require ( prefix .. "vorbiscomments" )
+require "modules.albumart"
 
 _NAME = "FLAC reader"
 
@@ -71,9 +74,9 @@ local blockreaders = {
 	[ 6 ] = function ( fd , length , item ) -- PICTURE
 		local e = item.extra
 		e.picture = e.picture or { }
-		e.picture [ #e.picture + 1 ] = vstruct.unpack ( [=[>
-			type:u4 mimetype:c4 desciption:c4 width:u4 height:u4 depth:u4 colours:u4 data:c4
-		]=] , fd )
+		e.picture [ #e.picture + 1 ] = lomp.albumart.processapic ( vstruct.unpack ( [=[>
+			type:u4 mimetype:c4 description:c4 width:u4 height:u4 depth:u4 colours:u4 data:c4
+		]=] , fd ) )
 	end ,
 }
 
@@ -109,34 +112,6 @@ function info ( item )
 		fd:close ( )
 		return false , "Not a flac file"
 	end
-end
-
-function write ( fd , tags )
-	local item = info ( fd )
-	
-	
-	local space_needed = #s
-	
-	local oldblocksize = 0
-	if item.extra.startvorbis then
-		fd:seek ( item.extra.startvorbis + 1 )
-		oldblocksize = vstruct.unpack ( "u3" , fd ) [ 1 ]
-	end
-	
-	if space_needed ~= oldblocksize then
-		-- Look for padding blocks
-		if type ( item.extra.padding ) == "table" then
-			
-		end
-		
-		if space_needed < oldblocksize then
-			
-		else --space_needed > oldblocksize then
-			
-		end
-	end
-	
-	-- Write
 end
 
 function edit ( items , edits , inherit )
