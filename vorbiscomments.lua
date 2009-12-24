@@ -43,7 +43,7 @@ function generatetag ( item , edits , inherit )
 	
 	-- Merge edits:
 	local comments = { }
-	if inherit then
+	if inherit and item.tags then
 		for k , v in pairs ( item.tags ) do
 			k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
 			local c = comments [ k ]

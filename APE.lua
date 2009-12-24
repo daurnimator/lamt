@@ -345,5 +345,5 @@ function edit ( path , tags , inherit )
 		fd:close ( )
 	end
 	
-	return #tag
+	return
 end

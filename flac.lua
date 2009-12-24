@@ -114,10 +114,57 @@ function info ( item )
 	end
 end
 
-function edit ( items , edits , inherit )
-	local vorbistag = generatetag ( items , edits , inherit )
-	-- Flac editing not ready yet
-	return false
+function edit ( item , edits , inherit )
+	local vorbistag = generatetag ( item , edits , inherit )
+	local needspace = #vorbistag + 4
+	
+	local fd , err = ioopen ( item.path , "wb" )
+	if not fd then return false , "Could not open file:" .. err end
+	
+	if fd:read ( 4 ) == "fLaC" then
+		local blocks = { }
+		repeat
+			local startoffset = fd:seek ( "cur" )
+			local METADATA_BLOCK_HEADER = vstruct.unpack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block:c3" , fd )
+			METADATA_BLOCK_HEADER.startoffset = startoffset
+			blocks [ #blocks + 1 ] = METADATA_BLOCK_HEADER
+		until METADATA_BLOCK_HEADER.lastmetadatablock
+		
+		local notspace = { }
+		local totalspace = 0
+		for i , v in ipairs ( blocks ) do
+			if v.block_type == 1 or v.block_type == 4 then -- Padding or Vorbis Comment
+				totalspace = totalspace + 4 + #v.block
+			else
+				notspace [ #notspace + 1 ] = v
+			end
+		end
+		
+		-- Move all space to end of headers
+		if #blocks ~= #notspace then
+			fd:seek ( "set" , 4 )
+			for i , v in ipairs ( notspace ) do
+				vstruct.pack ( "> [ 1 | x1 block_type:u7 ] block:c3" , fd , v )
+			end
+		end
+		
+		-- Ok, now we have all the available space at the end of the metadata section... lets check if we have enough room:
+		if totalspace >= needspace and totalspace < ( needspace + 4 ) then -- We fit exactly
+			vstruct.pack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block:c3" , fd , { lastmetadatablock = true ; block_type = 4 ; block = vorbistag } )
+			fd:seek ( "cur" , totalspace - needspace ) -- Create a bit of illegal padding... can't help it :(
+		elseif totalspace >= ( needspace + 4 ) then -- We can fit in...
+			vstruct.pack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block:c3" , fd , { lastmetadatablock = false ; block_type = 4 ; block = vorbistag } )
+			local paddingminusheader = totalspace - needspace - 4
+			vstruct.pack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block_length:u3 x" .. paddingminusheader , fd , { lastmetadatablock = true ; block_type = 1 ; block_length = paddingminusheader } )
+		else -- Gonna have to create more room... sigh
+			-- TODO
+		end
+	else
+		return false , "Not a flac file"
+	end
+	fd:close ( )
+	
+	return
 end
 
 return { { "flac" , "fla" } , info , edit }
