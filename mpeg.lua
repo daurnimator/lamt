@@ -11,6 +11,8 @@
 
 require "general"
 
+local prefix = (...):match("^(.-)[^%.]*$")
+
 local error , ipairs , require , unpack = error , ipairs , require , unpack
 local strbyte = string.byte
 local floor = math.floor
@@ -18,10 +20,10 @@ local ioopen = io.open
 
 module ( "lomp.fileinfo.mpeg" , package.see ( lomp ) )
 
-require "modules.fileinfo.APE"
-require "modules.fileinfo.id3v2"
-require "modules.fileinfo.id3v1"
-require "modules.fileinfo.tagfrompath"
+require ( prefix .. "APE" )
+require ( prefix .. "id3v2" )
+require ( prefix .. "id3v1" )
+require ( prefix .. "tagfrompath" )
 
 -- If quick it set, lengths and bitrates of many VBR files will probably be incorrect
 local quick = false

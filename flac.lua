@@ -21,6 +21,7 @@ module ( "lomp.fileinfo.flac" , package.see ( lomp ) )
 local vstruct = require "vstruct"
 
 require ( prefix .. "vorbiscomments" )
+require ( prefix .. "tagfrompath" )
 require "modules.albumart"
 
 _NAME = "FLAC reader"
@@ -38,11 +39,12 @@ local blockreaders = {
 			minblocksize:u2 maxblocksize:u2 minframesize:u3 maxframesize:u3
 			[ 8 | samplerate:u20 channels:u3 bitspersample:u5 totalsamples:u36 ]
 			md5:u16 
-		]=] , item.extra )
+		]=] , fd , item.extra )
 		item.length = STREAMINFO.totalsamples / STREAMINFO.samplerate
 		item.channels = STREAMINFO.channels
 		item.samplerate = STREAMINFO.samplerate
 		item.bitrate = 	STREAMINFO.samplerate*STREAMINFO.bitspersample
+		
 	end ,
 	[ 1 ] = function ( fd , length , item ) -- PADDING
 		local e = item.extra
@@ -60,7 +62,6 @@ local blockreaders = {
 		item.tagtype = "vorbiscomment"
 		item.tags = { }
 		item.extra.startvorbis = fd:seek ( "cur" )
-		
 		fileinfo.vorbiscomments.info ( fd , item )
 	end ,
 	[ 5 ] = function ( fd , length , item ) -- CUESHEET
