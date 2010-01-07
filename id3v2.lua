@@ -21,7 +21,6 @@ local strexplode = string.explode
 
 module ( "lomp.fileinfo.id3v2" , package.see ( lomp ) )
 
-pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 local vstruct = require "vstruct"
 local genrelist = require ( prefix .. "genrelist" )
 require "modules.albumart"

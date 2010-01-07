@@ -16,13 +16,11 @@ local ioopen = io.open
 
 module ( "lomp.fileinfo.id3v1" , package.see ( lomp ) )
 
-pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 local iconv = require "iconv"
 local genreindex = require ( select ( 1 , ... ):match ( "(.*%.)[^.]+$" ) .. "genrelist" )
 
 local Locale = "ISO-8859-1"
 local toid3 = iconv.new ( Locale , "UTF-8" )
-local fromid3 = iconv.new ( "UTF-8" , Locale )
 
 _NAME = "ID3v1 tag utils"
 
@@ -36,7 +34,7 @@ local speedindex = {
 local function readstring ( str )
 	str = str:gsub ( "[%s%z]*$" , "" )
 	if #str == 0 then return nil end
-	return fromid3:iconv ( str )
+	return str:utf8 ( Locale )
 end
 
 function find ( fd )

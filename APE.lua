@@ -18,7 +18,6 @@ local tblappend , tblconcat , tblinherit = table.append , table.concat , table.i
 
 module ( "lomp.fileinfo.APE" , package.see ( lomp ) )
 
-pcall ( require , "luarocks.require" ) -- Activates luarocks if available.
 local vstruct = require "vstruct"
 local iconv = require "iconv"
 
@@ -271,13 +270,13 @@ function edit ( path , tags , inherit )
 		end
 	end
 	
-	local tag = ""
-	local itemcount = 0
+	local tag = { }
 	for k , v in pairs ( newitems ) do
 		local item = generateutf8item ( k , v )
-		tag = tag .. vstruct.pack ( "< u4 m4 z s" , { #item.value , item.flags , k , item.value } )
-		itemcount = itemcount + 1
+		tag [ #tag + 1 ] = vstruct.pack ( "< u4 m4 z s" , { #item.value , item.flags , k , item.value } )
 	end
+	local itemcount = #tag
+	tag = tblconcat ( tag )
 		
 	local flags = { false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , false , true }
 	-- Make footer
