@@ -168,9 +168,9 @@ function info ( item )
 					tagateof = tagateof + 32
 				end
 			end
-			item.header = header
 			item.tagtype = "APE"
 			item.tags , item.extra = fileinfo.APE.info ( fd , offset , header )
+			item.extra.header = header
 		end
 	end
 
@@ -183,9 +183,9 @@ function info ( item )
 			else
 				tagateof = tagateof + header.size + 10
 			end
-			item.header = header
 			item.tagtype = "id3v2"
 			item.tags , item.extra = fileinfo.id3v2.info ( fd , offset , header )
+			item.extra.header = header
 		end
 	end
 	

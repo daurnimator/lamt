@@ -38,9 +38,9 @@ function info ( item )
 	if not item.tagtype then
 		local offset , header = fileinfo.APE.find ( fd )
 		if offset then
-			item.header = header
 			item.tagtype = "APE"
 			item.tags , item.extra = fileinfo.APE.info ( fd , offset , header )
+			item.extra.header = header
 		end
 	end
 	-- Figure out from path

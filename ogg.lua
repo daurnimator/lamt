@@ -140,7 +140,7 @@ function info ( item )
 	item.filesize = fd:seek ( "end" )
 	
 	if not item.length then
-		item.length = item.filesize / ( item.bitrate / 8 )
+		item.length = item.filesize * 8 / item.bitrate
 	end
 	
 	return item

@@ -18,7 +18,10 @@ local ioopen = io.open
 
 module ( "lomp.fileinfo.flac" , package.see ( lomp ) )
 
+-- Format info found at http://flac.sourceforge.net/format.html
+
 local vstruct = require "vstruct"
+-- Note: bitpacks for vstruct are backwards to the way they are specified in the flac docs
 
 require ( prefix .. "vorbiscomments" )
 require ( prefix .. "tagfrompath" )
@@ -37,13 +40,16 @@ local blockreaders = {
 	[ 0 ] = function ( fd , length , item ) -- STREAMINFO
 		local STREAMINFO = vstruct.unpack ( [=[>
 			minblocksize:u2 maxblocksize:u2 minframesize:u3 maxframesize:u3
-			[ 8 | samplerate:u20 channels:u3 bitspersample:u5 totalsamples:u36 ]
-			md5:u16 
-		]=] , fd , item.extra )
+			[ 8 | totalsamples:u36 bitspersample:u5 channels:u3 samplerate:u20 ]
+			md5:s16 
+		]=] , fd , item.extra ) -- Add to item.extra
+		STREAMINFO.channels = STREAMINFO.channels + 1
+		STREAMINFO.bitspersample = STREAMINFO.bitspersample + 1
+		
 		item.length = STREAMINFO.totalsamples / STREAMINFO.samplerate
 		item.channels = STREAMINFO.channels
 		item.samplerate = STREAMINFO.samplerate
-		item.bitrate = 	STREAMINFO.samplerate*STREAMINFO.bitspersample
+		item.bitrate = STREAMINFO.samplerate * STREAMINFO.bitspersample
 		
 	end ,
 	[ 1 ] = function ( fd , length , item ) -- PADDING
@@ -68,7 +74,7 @@ local blockreaders = {
 		local e = item.extra
 		e.cuesheet = e.cuesheet or { }
 		e.cuesheet [ #e.cuesheet + 1 ] = vstruct.unpack ( [=[>
-			catalognumber:s128 leadinsamples:u8 [ 1 | cd:b1 x7] x258 tracks:u1
+			catalognumber:s128 leadinsamples:u8 [ 1 | x7 cd:b1 ] x258 tracks:u1
 		]=] , fd )
 		-- TODO: read CUESHEET_TRACK block
 	end ,
@@ -85,13 +91,12 @@ function info ( item )
 	local fd , err = ioopen ( item.path , "rb" )
 	if not fd then return false , "Could not open file:" .. err end
 	
-	-- Format info found at http://flac.sourceforge.net/format.html
 	if fd:read ( 4 ) == "fLaC" then 
 		item.format = "flac"
 		item.extra = { }
 		
 		repeat
-			local METADATA_BLOCK_HEADER = vstruct.unpack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block_length:u3" , fd )
+			local METADATA_BLOCK_HEADER = vstruct.unpack ( "> [ 1 | block_type:u7 lastmetadatablock:b1 ] block_length:u3" , fd )
 			local offset = fd:seek ( "cur" )
 			local f = blockreaders [ METADATA_BLOCK_HEADER.block_type ] 
 			if f then f ( fd , METADATA_BLOCK_HEADER.block_length , item ) end
@@ -115,6 +120,8 @@ function info ( item )
 	end
 end
 
+-- Edit a flac file.
+ -- Note: This will move all vorbis and padding to the end of the metadata section of the file. (even if it fails)
 function edit ( item , edits , inherit )
 	local vorbistag = generatetag ( item , edits , inherit )
 	local needspace = #vorbistag + 4
@@ -126,7 +133,7 @@ function edit ( item , edits , inherit )
 		local blocks = { }
 		repeat
 			local startoffset = fd:seek ( "cur" )
-			local METADATA_BLOCK_HEADER = vstruct.unpack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block:c3" , fd )
+			local METADATA_BLOCK_HEADER = vstruct.unpack ( "> [ 1 | block_type:u7 lastmetadatablock:b1 ] block:c3" , fd ) -- Reads in the full block
 			METADATA_BLOCK_HEADER.startoffset = startoffset
 			blocks [ #blocks + 1 ] = METADATA_BLOCK_HEADER
 		until METADATA_BLOCK_HEADER.lastmetadatablock
@@ -151,14 +158,14 @@ function edit ( item , edits , inherit )
 		
 		-- Ok, now we have all the available space at the end of the metadata section... lets check if we have enough room:
 		if totalspace >= needspace and totalspace < ( needspace + 4 ) then -- We fit exactly
-			vstruct.pack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block:c3" , fd , { lastmetadatablock = true ; block_type = 4 ; block = vorbistag } )
+			vstruct.pack ( "> [ 1 | block_type:u7 lastmetadatablock:b1 ] block:c3" , fd , { lastmetadatablock = true ; block_type = 4 ; block = vorbistag } )
 			fd:seek ( "cur" , totalspace - needspace ) -- Create a bit of illegal padding... can't help it :(
 		elseif totalspace >= ( needspace + 4 ) then -- We can fit in...
-			vstruct.pack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block:c3" , fd , { lastmetadatablock = false ; block_type = 4 ; block = vorbistag } )
+			vstruct.pack ( "> [ 1 | block_type:u7 lastmetadatablock:b1 ] block:c3" , fd , { lastmetadatablock = false ; block_type = 4 ; block = vorbistag } )
 			local paddingminusheader = totalspace - needspace - 4
-			vstruct.pack ( "> [ 1 | lastmetadatablock:b1 block_type:u7 ] block_length:u3 x" .. paddingminusheader , fd , { lastmetadatablock = true ; block_type = 1 ; block_length = paddingminusheader } )
+			vstruct.pack ( "> [ 1 | block_type:u7 lastmetadatablock:b1 ] block_length:u3 x" .. paddingminusheader , fd , { lastmetadatablock = true ; block_type = 1 ; block_length = paddingminusheader } )
 		else -- Gonna have to create more room... sigh
-			-- TODO
+			-- TODO. WARNING, DO NOT USE THIS FUNTION UNTIL THIS HAS BEEN FILLED IN
 		end
 	else
 		return false , "Not a flac file"
