@@ -759,7 +759,7 @@ local framedecode = {
 			description = str:sub ( b + 3 , e - 1 ):utf8 ( encoding.name ) ,
 			data = str:sub ( e + 1 )
 		}
-		lomp.albumart.processapic ( picture )
+		albumart.processapic ( picture )
 		-- TODO: use pictures
 	end ,
 	

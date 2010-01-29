@@ -81,7 +81,7 @@ local blockreaders = {
 	[ 6 ] = function ( fd , length , item ) -- PICTURE
 		local e = item.extra
 		e.picture = e.picture or { }
-		e.picture [ #e.picture + 1 ] = lomp.albumart.processapic ( vstruct.unpack ( [=[>
+		e.picture [ #e.picture + 1 ] = albumart.processapic ( vstruct.unpack ( [=[>
 			type:u4 mimetype:c4 description:c4 width:u4 height:u4 depth:u4 colours:u4 data:c4
 		]=] , fd ) )
 	end ,
