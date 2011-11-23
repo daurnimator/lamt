@@ -10,26 +10,26 @@ local ll = require"ll"
 local le_uint_to_num = ll.le_uint_to_num
 local num_to_le_uint = ll.num_to_le_uint
 
-local function read ( get , item )
-	item.extra = item.extra or { }
-	item.tags = item.tags or { }
+local function read ( get , tags , extra )
+	tags = tags or { }
+	extra = extra or { }
 
-	item.extra.vendor_string = get ( le_uint_to_num ( get(4) ) )
+	extra.vendor_string = get ( le_uint_to_num ( get(4) ) )
 
 	for i = 1 , le_uint_to_num ( get(4) ) do -- 4 byte unsigned integer indicating how many comments.
 		local line = get ( le_uint_to_num ( get(4) ) )
 		local fieldname , value = strmatch ( line , "([^=]+)=(.*)" )
 		fieldname = fieldname:lower ( )
-		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
-		item.tags [ fieldname ] [ #item.tags [ fieldname ] + 1 ] = value
+
+		tags [ fieldname ] = item.tags [ fieldname ] or { }
+		tblinsert ( tags [ fieldname ] , value )
 	end
+
+	return tags , extra
 end
 
-local function generate ( edits , item , inherit , exact )
-	local vendor_string = "lamt vorbiscomment" --"Xiph.Org libVorbis I 20020717"
-	if item then
-		vendor_string = item.extra.vendor_string
-	end
+local function generate ( edits , oldtags , extra , exact )
+	vendor_string = ( extra and extra.vendor_string ) or "lamt vorbiscomment" --"Xiph.Org libVorbis I 20020717"
 
 	local comments = setmetatable ( { } , {
 			__newindex = function ( t , k , v )
@@ -46,8 +46,8 @@ local function generate ( edits , item , inherit , exact )
 		} )
 
 	-- Merge edits:
-	if inherit and item.tags then
-		for k , v in pairs ( item.tags ) do
+	if oldtags then
+		for k , v in pairs ( oldtags ) do
 			for i , vv in ipairs ( v ) do -- Copy the table
 				tblinsert ( comments [ k ] , vv )
 			end
