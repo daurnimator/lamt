@@ -1,75 +1,76 @@
---[[
-	LOMP ( Lua Open Music Player )
-	Copyright (C) 2007- daurnimator
-
-	This program is free software: you can redistribute it and/or modify it under the terms of version 3 of the GNU General Public License as published by the Free Software Foundation.
-
-	This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-
-	You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
-]]
-
-require "general"
-
-local ipairs , pairs , require = ipairs , pairs , require
-local tblinsert = table.insert
-
-module ( "lomp.fileinfo.vorbiscomments" )
-
-local vstruct = require "vstruct"
-
-_NAME = "Vorbis comment tag reader/writer"
 -- Vorbis_Comment http://www.xiph.org/vorbis/doc/v-comment.html
 
-function info ( fd , item )
+local error = error
+local ipairs , pairs , rawset = ipairs , pairs , rawset
+local setmetatable = setmetatable
+local tblconcat , tblinsert = table.concat , table.insert
+local strmatch , strgsub = string.match , string.gsub
+
+local ll = require"ll"
+local le_uint_to_num = ll.le_uint_to_num
+local num_to_le_uint = ll.num_to_le_uint
+
+local function read ( get , item )
 	item.extra = item.extra or { }
 	item.tags = item.tags or { }
-	
-	item.extra.vendor_string = vstruct.unpack ( "< c4" , fd ) [ 1 ]
-	
-	for i = 1 , vstruct.unpack ( "< u4" , fd ) [ 1 ] do -- 4 byte interger indicating how many comments.
-		local line = vstruct.unpack ( "< c4" , fd ) [ 1 ]
-		local fieldname , value = line:match ( "([^=]+)=(.*)" )
+
+	item.extra.vendor_string = get ( le_uint_to_num ( get(4) ) )
+
+	for i = 1 , le_uint_to_num ( get(4) ) do -- 4 byte unsigned integer indicating how many comments.
+		local line = get ( le_uint_to_num ( get(4) ) )
+		local fieldname , value = strmatch ( line , "([^=]+)=(.*)" )
 		fieldname = fieldname:lower ( )
 		item.tags [ fieldname ] = item.tags [ fieldname ] or { }
 		item.tags [ fieldname ] [ #item.tags [ fieldname ] + 1 ] = value
 	end
 end
 
-function generatetag ( item , edits , inherit )	
-	local vendor_string = item.extra.vendor_string or "Xiph.Org libVorbis I 20020717"
-	--local vendor_string = core._PROGRAM .. " " .. _NAME
-	local tbl = { vendor = vendor_string }
-	
+local function generate ( edits , item , inherit , exact )
+	local vendor_string = "lamt vorbiscomment" --"Xiph.Org libVorbis I 20020717"
+	if item then
+		vendor_string = item.extra.vendor_string
+	end
+
+	local comments = setmetatable ( { } , {
+			__newindex = function ( t , k , v )
+				-- k_clean is "A case-insensitive field name that may consist of ASCII 0x20 through 0x7D, 0x3D ('=') excluded."
+				local k_clean = strgsub ( k , "[=%z\1-\31\127-\255]" , "" )
+				k_clean = k_clean:lower ( )
+
+				if k_clean ~= k and exact then
+					error ( "Invalid field name" , 2 )
+				end
+
+				return rawset ( t , k_clean , v )
+			end ;
+		} )
+
 	-- Merge edits:
-	local comments = { }
 	if inherit and item.tags then
 		for k , v in pairs ( item.tags ) do
-			k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
-			local c = comments [ k ]
-			if c then
-				for i , vv in ipairs ( v ) do
-					c [ #c + 1 ] = vv
-				end
-			else
-				comments [ k ] = v
+			for i , vv in ipairs ( v ) do -- Copy the table
+				tblinsert ( comments [ k ] , vv )
 			end
 		end
 	end
-	for k , v in pairs ( edits ) do -- edits overwrite any old tags for the given key...
-		k = k:gsub ( "=" , "" ):lower ( ) -- Remove any equals signs, change to lowercase
+
+	for k , v in pairs ( edits ) do -- edits overwrite any old tags with the given key...
 		comments [ k ] = v
 	end
-	
-	-- Add to vstruct data table
+
+	local tbl = { }
 	for k , v in pairs ( comments ) do
 		for i , v in ipairs ( v ) do
-			tbl [ #tbl + 1 ] = k .. "=" .. v
+			local vector = k .. "=" .. v
+			tblinsert ( tbl , num_to_le_uint ( #vector ) .. vector )
 		end
 	end
-	tbl.n = #tbl
-	
-	return vstruct.pack ( "< vendor:c4 n:u4 c4 * ".. #tbl , tbl )
+
+	return num_to_le_uint ( #vendor_string ) .. vendor_string
+			.. num_to_le_uint ( #tbl ) .. tblconcat ( tbl )
 end
 
-return _M
+return {
+	read = read ;
+	generate = generate ;
+}
