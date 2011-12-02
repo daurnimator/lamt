@@ -1,10 +1,15 @@
 -- FLAC reader
 
+local assert , error = assert , error
+local ipairs = ipairs
 local strsub , strrep = string.sub , string.rep
-local tblinsert = table.insert
+local strchar = string.char
+local tblinsert , tblremove = table.insert , table.remove
 
 local misc = require "misc"
 local get_from_string = misc.get_from_string
+local get_from_fd = misc.get_from_fd
+local file_insert = misc.file_insert
 
 local vorbiscomments = require "vorbiscomments"
 
@@ -13,6 +18,11 @@ local num_to_be_uint = ll.num_to_be_uint
 local be_uint_to_num = ll.be_uint_to_num
 local extract_bits = ll.extract_bits
 local bpeek = ll.bpeek
+
+local BT_STREAMINFO     = 0
+local BT_PADDING        = 1
+local BT_APPLICATION    = 2
+local BT_VORBIS_COMMENT = 4
 
 local function find ( fd )
 	fd:seek ( "set" )
@@ -23,7 +33,7 @@ local function find ( fd )
 end
 
 local blockreaders = {
-	[ 0 ] = function ( s , tags , extra ) -- STREAMINFO
+	[ BT_STREAMINFO ] = function ( s , tags , extra )
 		extra.minblocksize = be_uint_to_num ( s , 1 , 2 )
 		extra.maxblocksize = be_uint_to_num ( s , 3 , 4 )
 		extra.minframesize = be_uint_to_num ( s , 5 , 7 )
@@ -36,16 +46,16 @@ local blockreaders = {
 
 		extra.md5 = strsub ( s , 19 , 34 )
 	end ;
-	[ 1 ] = function ( s , tags , extra ) -- PADDING
+	[ BT_PADDING ] = function ( s , tags , extra )
 		extra.padding = ( extra.padding or 0 ) + #s
 	end ;
-	[ 2 ] = function ( s , tags , extra ) -- APPLICATION
+	[ BT_APPLICATION ] = function ( s , tags , extra )
 		extra.applications = extra.applications or { }
 		tblinsert ( extra.applications , { appID = be_uint_to_num ( s , 1 , 4 ) ; data = strsub ( s , 5 , -1 ) } )
 	end ,
 	--[[[ 3 ] = function ( fd , length , item ) -- SEEKTABLE (we can't do anything with this)
 	end ,]]
-	[ 4 ] = function ( s , tags , extra ) -- VORBIS_COMMENT
+	[ BT_VORBIS_COMMENT ] = function ( s , tags , extra ) -- VORBIS_COMMENT
 		vorbiscomments.read ( get_from_string ( s ) , tags , extra )
 	end ,
 	--[[ NYI: CUESHEET
@@ -79,59 +89,80 @@ local function read ( get , tags , extra )
 	return tags , extra
 end
 
---[[
--- Edit a flac file.
- -- Note: This will move all vorbis and padding to the end of the metadata section of the file. (even if it fails)
-function edit ( fd , tags , extra )
-	assert ( extra.flac_metadata_blocks , "Need to call flac.read first" )
+local function write_block ( fd , blocktype , data , last )
+	local H1 = strchar ( ( last and 128 or 0 ) + blocktype )
+	return assert ( fd:write (
+		H1 , num_to_be_uint ( #data , 3 ) , -- BLOCK_HEADER
+		data -- BLOCK_DATA
+	) )
+end
 
-	local vorbistag = vorbiscomments.generate ( tags , extra )
-	local needspace = #vorbistag + 4
+local function edit_vorbis_block ( tags , extra )
+	-- Remove all old vorbis tags
+	for i = #extra.flac_metadata_blocks , 1 , -1 do
+		local v = extra.flac_metadata_blocks [ i ]
+		if v.type == BT_VORBIS_COMMENT then
+			tblremove ( extra.flac_metadata_blocks , i )
+		end
+	end
+	local data = vorbiscomments.generate ( tags , extra )
+	tblinsert ( extra.flac_metadata_blocks , { type = BT_VORBIS_COMMENT ; data = data } )
+end
+
+-- Edit a flac file.
+local function edit ( fd , tags , extra )
+	assert ( fd:seek ( "set" , 0 ) )
+	local old_tags , old_extra = read ( get_from_fd ( fd ) )
+
+	if tags then
+		edit_vorbis_block ( tags , extra )
+	end
 
 	local havespace = 0
-	local keep_as_is = { }
+	for i , v in ipairs ( old_extra.flac_metadata_blocks ) do
+		havespace = havespace + 4 + #v.data
+	end
+
+	local writethese = { }
+	local needspace = 0
 	for i , v in ipairs ( extra.flac_metadata_blocks ) do
-		if v.type == 1 or v.type == 4 then -- Padding or Vorbis Comment
-			havespace = havespace + 4 + #v.data
-		else
-			tblinsert ( keep_as_is , v )
+		if v.type ~= BT_PADDING then
+			needspace = needspace + 4 + #v.data
+			tblinsert ( writethese , v )
 		end
 	end
 
-	if havespace >= needspace then -- Got enough space
-		fd:seek ( "set" , 4 )
-		for i , v in ipairs ( keep_as_is ) do
-			-- Write block out to file: we aren't modifying it
-			assert ( fd:write (
-				num_to_be_uint ( v.type , 1 ) , num_to_be_uint ( #v.data , 3 ) , -- BLOCK_HEADER (not last)
-				v.data -- BLOCK_DATA
-			) )
-		end
-		local extraspace = havespace - needspace
-		if extraspace < 4 then
-			-- If you can't fit the header for the padding block then just pad out the vorbis comment with nul bytes
-			assert ( fd:write (
-				"\132" , num_to_be_uint ( #vorbistag + extraspace , 3 ) , -- BLOCK_HEADER (this is last block)
-				vorbistag ..  strrep ( "\0" , extraspace ) -- BLOCK_DATA
-			) )
-		else
-			-- Write out vorbis tag
-			assert ( fd:write (
-				"\4" , num_to_be_uint ( #vorbistag , 3 ) , -- BLOCK_HEADER (not last)
-				vorbistag -- BLOCK_DATA
-			) )
-			-- Make a padding tag to take up remaning space before audio data
-			assert ( fd:write (
-				"\129" , num_to_be_uint ( extraspace - 4 , 3 ) , -- BLOCK_HEADER (this is last block)
-				strrep ( "\0" , extraspace - 4 ) -- BLOCK_DATA
-			) )
-		end
-	else -- Damn, gotta shift the whole file down
+	assert ( fd:seek ( "set" , 4 ) )
 
+	if havespace < needspace then -- Haven't got enough space?
+		-- Let's be nice and add some padding
+		local PADDING_SIZE = 2^11
+		file_insert ( fd , strrep ( "\0" , needspace - havespace + PADDING_SIZE ) )
+		assert ( fd:seek ( "set" , 4 ) )
+		havespace = needspace + PADDING_SIZE
+	end
+
+	local nblocks = #writethese
+	for i = 1 , nblocks - 1 do
+		local v = writethese [ i ]
+		write_block ( fd , v.type , v.data )
+	end
+
+	local v = writethese [ nblocks ]
+	local extraspace = havespace - needspace
+	if extraspace < 4 then
+		-- If you can't fit the header for the padding block then just pad out the last block with nul bytes
+		write_block ( fd , v.type , v.data ..  strrep ( "\0" , extraspace ) , true )
+	else
+		-- Write out last tag
+		write_block ( fd , v.type , v.data )
+		-- Make a padding tag to take up remaning space before audio data
+		write_block ( fd , BT_PADDING , strrep ( "\0" , extraspace - 4 ) , true )
 	end
 end
---]]
 
 return {
+	find = find ;
 	read = read ;
+	edit = edit ;
 }
