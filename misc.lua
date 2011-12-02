@@ -5,7 +5,7 @@ local strsub = string.sub
 -- Inserts the given string (block) at the current position in the file; moving all other data down.
 -- Uses BLOCKSIZE chunks
 local function file_insert ( fd , block , BLOCKSIZE )
-	BLOCKSIZE = BLOCKSIZE  or 2^20
+	BLOCKSIZE = BLOCKSIZE or 2^20
 	assert ( #block <= BLOCKSIZE )
 
 	while true do
@@ -13,14 +13,11 @@ local function file_insert ( fd , block , BLOCKSIZE )
 
 		local seekto
 		if nextblock ~= nil then
-			seekto = -#nextblock
+			assert ( fd:seek ( "cur" , -#nextblock ) )
 		elseif e then
 			error ( e )
-		else
-			seekto = 0
 		end
 
-		assert ( fd:seek ( "cur" , seekto ) )
 		assert ( fd:write ( block ) )
 		if nextblock == nil then break end
 		assert ( fd:write ( strsub ( nextblock , 1 , BLOCKSIZE-#block ) ) )
