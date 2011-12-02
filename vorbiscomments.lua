@@ -23,7 +23,7 @@ local function read ( get , tags , extra )
 		local fieldname , value = strmatch ( line , "([^=]+)=(.*)" )
 		fieldname = fieldname:lower ( )
 
-		tags [ fieldname ] = item.tags [ fieldname ] or { }
+		tags [ fieldname ] = tags [ fieldname ] or { }
 		tblinsert ( tags [ fieldname ] , value )
 	end
 
