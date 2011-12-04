@@ -1,5 +1,6 @@
 local assert , error = assert , error
 local strsub = string.sub
+local tblinsert , tblconcat = table.insert , table.concat
 
 
 -- Inserts the given string (block) at the current position in the file; moving all other data down.
@@ -44,9 +45,22 @@ local function get_from_fd ( fd )
 	end
 end
 
+local function read_terminated_string ( get , terminator )
+	terminator = terminator or "\0"
+	local str = { }
+	while true do
+		local c = get ( 1 )
+		if c == terminator then break end
+		tblinsert ( str , c )
+	end
+	return tblconcat ( str )
+end
+
 return {
 	file_insert = file_insert ;
 
 	get_from_string = get_from_string ;
 	get_from_fd = get_from_fd ;
+
+	read_terminated_string = read_terminated_string ;
 }
