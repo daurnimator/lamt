@@ -17,7 +17,7 @@ local ll = require "ll"
 local num_to_be_uint = ll.num_to_be_uint
 local be_uint_to_num = ll.be_uint_to_num
 local extract_bits = ll.extract_bits
-local bpeek = ll.bpeek
+local be_bpeek = ll.be_bpeek
 
 local BT_STREAMINFO     = 0
 local BT_PADDING        = 1
@@ -76,7 +76,7 @@ local function read ( get , tags , extra )
 	extra.flac_metadata_blocks = { }
 	repeat
 		local BLOCK_HEADER = get ( 4 )
-		local lastmetadatablock = bpeek ( BLOCK_HEADER , 0 )
+		local lastmetadatablock = be_bpeek ( BLOCK_HEADER , 0 )
 		local BLOCK_TYPE = be_uint_to_num ( BLOCK_HEADER , 1 , 1 ) % 2^7
 		local BLOCK_LENGTH = be_uint_to_num ( BLOCK_HEADER , 2 , 4 )
 		local BLOCK_DATA = get ( BLOCK_LENGTH )

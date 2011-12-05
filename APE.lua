@@ -21,7 +21,7 @@ local ll = require "ll"
 local le_uint_to_num = ll.le_uint_to_num
 local num_to_le_uint = ll.num_to_le_uint
 local extract_bits =   ll.extract_bits
-local bpeek =          ll.bpeek
+local le_bpeek =       ll.le_bpeek
 
 
 local function read_header_footer ( get )
@@ -33,9 +33,9 @@ local function read_header_footer ( get )
 
 		local flags = get ( 4 )
 		if h.version >= 2000 then
-			h.hasheader = bpeek ( flags , 31 )
-			h.hasfooter = bpeek ( flags , 30 )
-			h.isheader = bpeek ( flags , 29 )
+			h.hasheader = le_bpeek ( flags , 31 )
+			h.hasfooter = not le_bpeek ( flags , 30 )
+			h.isheader = le_bpeek ( flags , 29 )
 		else -- Version 1
 			h.hasheader = false
 			h.hasfooter = true
@@ -80,7 +80,7 @@ local function read_item ( get , header )
 	local length = le_uint_to_num ( get ( 4 ) )
 	local flags = get ( 4 )
 	local contenttype = contenttypes [ extract_bits ( flags , 1 , 2 ) ] -- Ends up as text in version 1 as flags are all 0s anyway
-	local readonly = bpeek ( flags , 0 )
+	local readonly = le_bpeek ( flags , 0 )
 
 	local key = read_terminated_string ( get )
 
