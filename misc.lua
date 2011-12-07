@@ -1,7 +1,11 @@
+local rel_dir = assert ( debug.getinfo ( 1 , "S" ).source:match ( [=[^@(.-[/\]?)[^/\]*$]=] ) , "Current directory unknown" ) .. "./"
+package.path = package.path .. ";" .. rel_dir .. "?/init.lua"
+
 local assert , error = assert , error
 local strfind , strsub = string.find , string.sub
 local tblinsert , tblconcat = table.insert , table.concat
 
+local iconv = require "iconv"
 
 -- Inserts the given string (block) at the current position in the file; moving all other data down.
 -- Uses BLOCKSIZE chunks
@@ -97,6 +101,12 @@ function strexplode ( str , seperator , plain )
 	return t
 end
 
+local function text_encoding ( str , from , to )
+	local c = iconv.new ( from , to )
+	return c ( str )
+end
+
+
 return {
 	file_insert = file_insert ;
 
@@ -106,4 +116,6 @@ return {
 	read_terminated_string = read_terminated_string ;
 
 	strexplode = strexplode ;
+
+	text_encoding = text_encoding ;
 }
