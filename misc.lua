@@ -51,18 +51,28 @@ local function get_from_fd ( fd )
 	end
 end
 
+local function string_to_array_of_chars ( s )
+	local t = { }
+	for i = 1 , #s do
+		t [ i ] = strsub ( s , i , i )
 	end
+	return t
 end
 
-local function read_terminated_string ( get , terminator )
-	terminator = terminator or "\0"
+local function read_terminated_string ( get , terminators )
+	local terminators = string_to_array_of_chars ( terminators or "\0" )
 	local str = { }
-	while true do
+	local found = 0
+	while found < #terminators do
 		local c = get ( 1 )
-		if c == terminator then break end
+		if c == terminators [ found + 1 ] then
+			found = found + 1
+		else
+			found = 0
+		end
 		tblinsert ( str , c )
 	end
-	return tblconcat ( str )
+	return tblconcat ( str , "" , 1 , #str - #terminators )
 end
 
 return {
