@@ -28,20 +28,29 @@ local function file_insert ( fd , block , BLOCKSIZE )
 	assert ( fd:flush ( ) )
 end
 
-local function get_from_string ( s )
-	local i = 0
+local function get_from_string ( s , i )
+	i = i or 1
 	return function ( n )
 		i = i + n
-		if i > #s then return error ( "End of string" ) end
-		return strsub ( s , i-n+1 , i )
+		if i > #s then return error ( "Unable to read enough characters" ) end
+		return strsub ( s , i-n , i-1 )
+	end , function ( new_i )
+		if new_i then i = new_i end
+		return i
 	end
 end
 
 local function get_from_fd ( fd )
 	return function ( n )
 		local r = assert ( fd:read ( n ) )
-		if #r < n then return error ( "End of string" ) end
+		if #r < n then return error ( "Unable to read enough characters" ) end
 		return r
+	end , function ( newpos )
+		if newpos then return assert ( fd:seek ( "set" , newpos ) ) end
+		return assert ( fd:seek ( ) )
+	end
+end
+
 	end
 end
 
