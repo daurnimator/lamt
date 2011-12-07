@@ -1,0 +1,3 @@
+[submodule "iconv"]
+	path = iconv
+	url = git://github.com/daurnimator/iconv-lua-ffi.git
