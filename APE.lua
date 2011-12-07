@@ -53,14 +53,14 @@ local function find ( fd )
 	local get = get_from_fd ( fd )
 
 	-- Look at start of file
-	fd:seek ( "set" )
+	assert ( fd:seek ( "set" ) )
 	local h = read_header_footer ( get )
 	if h then
 		return 32 , h
 	end
 
 	-- Look at end of file
-	local pos = fd:seek ( "end" , -32 )
+	local pos = assert ( fd:seek ( "end" , -32 ) )
 	local h = read_header_footer ( get )
 	if h then
 		return pos + 32 - h.size , h
@@ -154,7 +154,7 @@ local function edit ( fd , tags , extra )
 	if not pos then -- Doesn't current have an ape tag
 		-- Put tag at end of file
 		tag = make_tag ( items , false , true )
-		fd:seek ( "end" )
+		assert ( fd:seek ( "end" ) )
 	elseif pos == 32 then -- Old tag was at start of file
 		local hasroom = 32 + oldheader.size + ( oldheader.hasfooter and 32 or 0 )
 		tag = make_tag ( items , true , oldheader.hasfooter , hasroom )
@@ -162,13 +162,13 @@ local function edit ( fd , tags , extra )
 			local shiftby = #tag - hasroom
 			file_insert ( fd , strrep ( "\0" , shiftby ) )
 		end
-		fd:seek ( "set" )
+		assert ( fd:seek ( "set" ) )
 	elseif pos > 32 then -- Old tag was at end of file
-		local fileend = fd:seek ( "end" )
+		local fileend = assert ( fd:seek ( "end" ) )
 		if oldheader.hasheader then pos = pos - 32 end
 
 		tag = make_tag ( items , oldheader.hasheader , true , fileend - pos )
-		fd:seek ( "set" , pos )
+		assert ( fd:seek ( "set" , pos ) )
 	elseif pos < 32 then
 		error ( )
 	end

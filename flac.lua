@@ -25,7 +25,7 @@ local BT_APPLICATION    = 2
 local BT_VORBIS_COMMENT = 4
 
 local function find ( fd )
-	fd:seek ( "set" )
+	assert ( fd:seek ( "set" ) )
 	if fd:read ( 4 ) == "fLaC" then
 		return 0
 	end
