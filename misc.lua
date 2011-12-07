@@ -1,5 +1,5 @@
 local assert , error = assert , error
-local strsub = string.sub
+local strfind , strsub = string.find , string.sub
 local tblinsert , tblconcat = table.insert , table.concat
 
 
@@ -75,6 +75,28 @@ local function read_terminated_string ( get , terminators )
 	return tblconcat ( str , "" , 1 , #str - #terminators )
 end
 
+-- Explodes a string on seperator
+function strexplode ( str , seperator , plain )
+	if type ( seperator ) ~= "string" or seperator == "" then
+		error ( "Provide a valid seperator (a string of length >= 1)" )
+	end
+
+	local t , nexti = { } , 1
+	local pos = 1
+	while true do
+		local st , sp = strfind ( str , seperator , pos , plain )
+		if not st then break end -- No more seperators found
+
+		if pos ~= st then
+			t [ nexti ] = strsub ( str , pos , st - 1 ) -- Attach chars left of current divider
+			nexti = nexti + 1
+		end
+		pos = sp + 1 -- Jump past current divider
+	end
+	t [ nexti ] = strsub ( str , pos ) -- Attach chars right of last divider
+	return t
+end
+
 return {
 	file_insert = file_insert ;
 
@@ -82,4 +104,6 @@ return {
 	get_from_fd = get_from_fd ;
 
 	read_terminated_string = read_terminated_string ;
+
+	strexplode = strexplode ;
 }
