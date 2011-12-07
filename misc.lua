@@ -35,6 +35,9 @@ end
 local function get_from_string ( s , i )
 	i = i or 1
 	return function ( n )
+		if not n then -- Rest of string
+			n = #s - i
+		end
 		i = i + n
 		if i > #s then return error ( "Unable to read enough characters" ) end
 		return strsub ( s , i-n , i-1 )
@@ -46,9 +49,13 @@ end
 
 local function get_from_fd ( fd )
 	return function ( n )
-		local r = assert ( fd:read ( n ) )
-		if #r < n then return error ( "Unable to read enough characters" ) end
-		return r
+		if not n then
+			return assert ( fd:read ( "*a" ) )
+		else
+			local r = assert ( fd:read ( n ) )
+			if #r < n then return error ( "Unable to read enough characters" ) end
+			return r
+		end
 	end , function ( newpos )
 		if newpos then return assert ( fd:seek ( "set" , newpos ) ) end
 		return assert ( fd:seek ( ) )
