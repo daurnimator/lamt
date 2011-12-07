@@ -59,7 +59,8 @@ end
 -- Look at ith bit in given string (indexed from 0)
 -- Returns boolean
 local le_bpeek = function ( s , bitnum )
-	local byte , bit = floor ( bitnum / 8 ) + 1 , bitnum % 8
+	local byte = floor ( bitnum / 8 ) + 1
+	local bit = bitnum % 8
 	local char = strbyte ( s , byte )
 	return floor ( ( char % 2^(bit+1) ) / 2^bit ) == 1
 end
@@ -67,7 +68,10 @@ end
 --local sum = 0 for i=0,31 do v = le_bpeek ( num_to_le_uint ( N , 4 ) , i ) sum=sum + ( v and 1 or 0 )*2^i end assert ( sum == N )
 
 local be_bpeek = function ( s , bitnum )
-	return extract_bits ( s , bitnum , bitnum ) == 1
+	local byte = floor ( bitnum / 8 ) + 1
+	local bit = 7-bitnum % 8
+	local char = strbyte ( s , byte )
+	return floor ( ( char % 2^(bit+1) ) / 2^bit ) == 1
 end
 -- Test with:
 --local sum = 0 for i=0,31 do v = be_bpeek ( num_to_be_uint ( N , 4 ) , i ) sum=sum + ( v and 1 or 0 )*2^(31-i) end assert ( sum == N )
