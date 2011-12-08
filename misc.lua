@@ -4,6 +4,7 @@ package.path = package.path .. ";" .. rel_dir .. "?/init.lua"
 local assert , error = assert , error
 local strfind , strsub = string.find , string.sub
 local tblinsert , tblconcat = table.insert , table.concat
+local os_date , os_time = os.date , os.time
 
 local iconv = require "iconv"
 
@@ -113,6 +114,37 @@ local function text_encoding ( str , from , to )
 	return c ( str )
 end
 
+local date_mt = {
+	__tostring = function ( t )
+		local date = ""
+		if rawget ( t , "year" ) then
+			date = date .. "%Y"
+			if rawget ( t , "month" ) then
+				date = date .. "-%m"
+				if rawget ( t , "day" ) then
+					date = date .. "-%d"
+				end
+			end
+		end
+
+		local time = ""
+		if rawget ( t , "hour" ) and rawget ( t , "min" ) then
+			time = "T%H:%M"
+			if rawget ( t , "sec" ) then
+				time = time .. ":%S"
+			end
+			time = time .. "+%Z"
+		end
+
+		return os_date ( date .. time , os_time ( t ) )
+	end ;
+	__index = function ( t , k )
+		return 0
+	end ;
+}
+local function new_date ( t )
+	return setmetatable ( t , date_mt )
+end
 
 return {
 	file_insert = file_insert ;
@@ -125,4 +157,6 @@ return {
 	strexplode = strexplode ;
 
 	text_encoding = text_encoding ;
+
+	new_date = new_date ;
 }
