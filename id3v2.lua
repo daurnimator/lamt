@@ -7,10 +7,13 @@
  -- http://www.id3.org/id3v2-00
 
 local assert , error = assert , error
+local tonumber = tonumber
+local ipairs = ipairs
 local strgsub , strmatch , strgmatch = string.gsub , string.match , string.gmatch
 local strsub , strbyte = string.sub , string.byte
 local tblinsert = table.insert
 local tblconcat = table.concat
+local ceil = math.ceil
 
 local ll = require "ll"
 local be_uint_to_num = ll.be_uint_to_num
@@ -22,6 +25,7 @@ local get_from_string = misc.get_from_string
 local read_terminated_string = misc.read_terminated_string
 local strexplode = misc.strexplode
 local text_encoding = misc.text_encoding
+local new_date = misc.new_date
 
 local genrelist = require "genrelist"
 
@@ -168,7 +172,7 @@ local function get_frame ( get , version_major )
 		frame = get ( size )
 	elseif version_major == 2 then
 		local size = be_uint_to_num ( get ( 3 ) )
-		error("NYI")
+		frame = get ( size )
 	else
 		error ( "Unknown ID3v2 version or non-conformant file" )
 	end
@@ -198,13 +202,13 @@ local function get_frame ( get , version_major )
 end
 
 local function appendtag ( tags , field , value )
-	local t = tags [ field ]
-	if not t then
-		t = { }
-		tags [ field ] = t
-	end
-
 	if value ~= "" then
+		local t = tags [ field ]
+		if not t then
+			t = { }
+			tags [ field ] = t
+		end
+
 		tblinsert ( t , value )
 	end
 end
@@ -212,11 +216,15 @@ end
 local function read_text_frame ( s )
 	local encoding = encodings [ strbyte ( s , 1 ) ]
 
+	local r = { }
 	local t = strexplode ( s , encoding.terminator , true )
 	for i , text in ipairs ( t ) do
-		t [ i ] = toutf8 ( text , encoding.name )
+		if #text > 0 then
+			local text = toutf8 ( text , encoding.name )
+			tblinsert ( r , text )
+		end
 	end
-	return t
+	return r
 end
 
 local function reader_plain_text_frame ( field )
@@ -239,11 +247,63 @@ local function reader_text_number_frame ( field )
 	end
 end
 
+local function reader_text_numeric_part ( num_field , den_field )
+	return function ( s , tags )
+		for i , v in ipairs ( read_text_frame ( s ) ) do
+			local num , den = strmatch ( v , "^(%d+)/?(%d*)$" )
+			num = assert ( tonumber ( num ) , "Invalid numeric part" )
+			den = tonumber ( den )
+
+			appendtag ( tags , num_field , num )
+			if den then
+				appendtag ( tags , den_field , num )
+			end
+		end
+	end
+end
+
 local reader_text_year_frame = reader_text_number_frame
 
 local function reader_plain_url_frame ( field )
 	return function ( s , tags )
 		appendtag ( tags , field , s )
+	end
+end
+
+-- Cut down ISO 8601 parser
+-- returns a table ready for os.time
+local function read_timestamp ( v )
+	local date , time = strmatch ( v , "([%-%d]*)T?([:%d]*)" )
+	if not ( date and time ) then
+		error ( "Invalid timestamp: " .. v )
+	end
+	local year , month , day , hour , min , sec
+
+	year = tonumber ( strsub ( date , 1 , 4 ) )
+	if "-" == strsub ( date , 5 , 5 ) then
+		month = tonumber ( strsub ( date , 6 , 7 ) )
+		if "-" == strsub ( date , 8 , 8 ) then
+			day = tonumber ( strsub ( date , 9 , 10 ) )
+		end
+	end
+
+	hour = tonumber ( strsub ( time , 1 , 2 ) )
+	if ":" == strsub ( time , 3 , 3 ) then
+		min = tonumber ( strsub ( time , 4 , 5 ) )
+		if ":" == strsub ( time , 6 , 6 ) then
+			sec = tonumber ( strsub ( time , 7 , 8 ) )
+		end
+	end
+
+	return new_date ( { year = year , month = month , day = day , hour = hour , min = min , sec = sec } )
+end
+
+local function reader_timestamp ( field )
+	return function ( s , tags )
+		for i , v in ipairs ( read_text_frame ( s ) ) do
+			local tim = read_timestamp ( v )
+			appendtag ( tags , field , tim )
+		end
 	end
 end
 
@@ -255,7 +315,15 @@ do -- v2
 
 	--frame_decoders[2].BUF Recommended buffer size
 	--frame_decoders[2].CNT Play counter
-	--frame_decoders[2].COM Comments
+	frame_decoders[2].COM = function ( s , tags ) --  Comments
+		local encoding = encodings [ strbyte ( s , 1 ) ]
+		local get = get_from_string ( s )
+		local language = get ( 3 )
+		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
+		local data = toutf8 ( get ( ) , encoding.name )
+
+		appendtag ( tags , "comment" , data )
+	end
 	--frame_decoders[2].CRA Audio encryption
 	--frame_decoders[2].CRM Encrypted meta frame
 	--frame_decoders[2].ETC Event timing codes
@@ -266,19 +334,57 @@ do -- v2
 	--frame_decoders[2].MCI Music CD Identifier
 	--frame_decoders[2].MLL MPEG location lookup table
 	--frame_decoders[2].PIC Attached picture
-	--frame_decoders[2].POP Popularimeter
+	frame_decoders[2].POP = function ( s , tags ) -- Popularimeter
+		if strsub ( s , 1 , 3 ) == "\0\0\31" then -- WM9 seems to add a couple of null bytes.....
+			s = strsub ( s , 4 , -1 )
+		end
+
+		local get = get_from_string ( s )
+		local email = read_terminated_string ( get )
+		-- Note: email is ignored
+
+		local rating = strbyte ( get ( 1 ) )
+		if rating ~= 0 then
+			appendtag ( tags , "rating" , rating )
+		end
+		local counter = be_uint_to_num ( get ( ) )
+		appendtag ( tags , "play count" , counter )
+	end
 	--frame_decoders[2].REV Reverb
-	--frame_decoders[2].RVA Relative volume adjustment
+	frame_decoders[2].RVA = function ( s , tags ) -- Relative volume adjustment
+			local get = get_from_string ( s )
+
+			local inc_flags = get ( 1 )
+			local inc_right      = be_bpeek ( inc_flags , 0 )
+			local inc_left       = be_bpeek ( inc_flags , 1 )
+			local inc_right_back = be_bpeek ( inc_flags , 2 )
+			local inc_left_back  = be_bpeek ( inc_flags , 3 )
+			local inc_centre     = be_bpeek ( inc_flags , 4 )
+			local inc_bass       = be_bpeek ( inc_flags , 5 )
+
+			local bits_used = strbyte ( get ( 1 ) )
+			local bytes_used = ceil ( bits_used / 8 )
+
+			-- TODO
+			--[[
+			local change_right = ( inc_right and 1 or -1 ) * be_uint_to_num ( get ( bytes_used ) )
+			local change_left =  ( inc_left  and 1 or -1 ) * be_uint_to_num ( get ( bytes_used ) )
+
+			local peak_right = be_uint_to_num ( get ( bytes_used ) )
+			local peak_left =  be_uint_to_num ( get ( bytes_used ) )
+			--]]
+	end
 	--frame_decoders[2].SLT Synchronized lyric/text
 	--frame_decoders[2].STC Synced tempo codes
 	frame_decoders[2].TAL = reader_plain_text_frame ( "album" ) -- Album/Movie/Show title
 	frame_decoders[2].TBP = reader_text_number_frame ( "bpm" ) -- BPM (Beats Per Minute)
-	--frame_decoders[2].TCM = reader_plain_text_frame ( "composer" ) -- Composer
+	frame_decoders[2].TCM = reader_plain_text_frame ( "composer" ) -- Composer
 	frame_decoders[2].TCO = function ( s , tags ) -- Content type
 		local field = "genre"
 
 		for i , v in ipairs ( read_text_frame ( s ) ) do
 			if strsub ( v , 1 , 1 ) == "(" then
+				-- This is an awkward field; this parser will ignore any strings between bracketed expressions (eg, "(4)Eurodisco(5)Funky will ignore Eurodisco")
 				local genre = { }
 				for id3v1_genre , endbracket in strgmatch ( v , "%(([^%)]+)(%)?)" ) do
 					local n = tonumber ( id3v1_genre )
@@ -302,7 +408,7 @@ do -- v2
 			end
 		end
 	end
-	--frame_decoders[2].TCR = reader_plain_text_frame ( "copyright" ) -- Copyright message
+	frame_decoders[2].TCR = reader_plain_text_frame ( "copyright" ) -- Copyright message
 	--frame_decoders[2].TDA Date
 	frame_decoders[2].TDY = reader_text_number_frame ( "audio delay" ) -- Playlist delay
 	frame_decoders[2].TEN = reader_plain_text_frame ( "encoder" ) -- Encoded by
@@ -321,11 +427,11 @@ do -- v2
 	frame_decoders[2].TP2 = reader_plain_text_frame ( "band" ) -- Band/Orchestra/Accompaniment
 	frame_decoders[2].TP3 = reader_plain_text_frame ( "conductor" ) -- Conductor/Performer refinement
 	frame_decoders[2].TP4 = reader_plain_text_frame ( "remixer" ) -- Interpreted, remixed, or otherwise modified by
-	--frame_decoders[2].TPA Part of a set
+	frame_decoders[2].TPA = reader_text_numeric_part ( "disc" , "total discs" ) -- Part of a set
 	frame_decoders[2].TPB = reader_plain_text_frame ( "publisher" ) -- Publisher
 	frame_decoders[2].TRC = reader_plain_text_frame ( "isrc" ) -- ISRC (International Standard Recording Code)
 	--frame_decoders[2].TRD Recording dates
-	--frame_decoders[2].TRK Track number/Position in set
+	frame_decoders[2].TRK = reader_text_numeric_part ( "track" , "total tracks" ) -- Track number/Position in set
 	frame_decoders[2].TSI = reader_text_number_frame ( "audio size" ) -- Size
 	frame_decoders[2].TSS = reader_plain_text_frame ( "encoder settings" ) -- Software/hardware and settings used for encoding
 	frame_decoders[2].TT1 = reader_plain_text_frame ( "content group description" ) -- Content group description
@@ -345,11 +451,10 @@ do -- v2
 	frame_decoders[2].WXX = function ( s , tags ) -- User defined URL link frame
 		local encoding = encodings [ strbyte ( s , 1 ) ]
 		local get = get_from_string ( s )
-		local description = read_terminated_string ( get , encoding.terminator )
+		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
 		local url = get ( )
 
 		local field = description .. " url"
-
 		appendtag ( tags , field , url )
 	end
 end
@@ -362,7 +467,7 @@ do -- v3
 	frame_decoders[3].COMM = frame_decoders[2].COM -- Comments
 	--frame_decoders[3].COMR = -- Commercial frame
 	--frame_decoders[3].ENCR = -- Encryption method registration
-	--?frame_decoders[3].EQUA = -- Equalization
+	frame_decoders[3].EQUA = frame_decoders[2].EQU -- Equalization
 	frame_decoders[3].ETCO = frame_decoders[2].ETC -- Event timing codes
 	frame_decoders[3].GEOB = frame_decoders[2].GEO -- General encapsulated object
 	--frame_decoders[3].GRID = -- Group identification registration
@@ -371,12 +476,17 @@ do -- v3
 	frame_decoders[3].MCDI = frame_decoders[2].MCI -- Music CD identifier
 	frame_decoders[3].MLLT = frame_decoders[2].MLL -- MPEG location lookup table
 	--frame_decoders[3].OWNE = -- Ownership frame
-	--frame_decoders[3].PRIV = -- Private frame
+	frame_decoders[3].PRIV = function ( s , tags ) -- Private frame
+		local get = get_from_string ( s )
+		local ownerid = read_terminated_string ( get )
+		local data = get ( )
+		-- TODO
+	end
 	frame_decoders[3].PCNT = frame_decoders[2].CNT -- Play counter
 	frame_decoders[3].POPM = frame_decoders[2].POP -- Popularimeter
 	--frame_decoders[3].POSS = -- Position synchronisation frame
 	frame_decoders[3].RBUF = frame_decoders[2].BUF -- Recommended buffer size
-	--?frame_decoders[3].RVAD = -- Relative volume adjustment
+	frame_decoders[3].RVAD = frame_decoders[2].RVA -- Relative volume adjustment
 	frame_decoders[3].RVRB = frame_decoders[2].REV -- Reverb
 	frame_decoders[3].SYLT = frame_decoders[2].SLT -- Synchronized lyric/text
 	frame_decoders[3].SYTC = frame_decoders[2].STC -- Synchronized tempo codes
@@ -466,12 +576,12 @@ do -- v4
 	frame_decoders[4].TCOM = frame_decoders[3].TCOM -- Composer
 	frame_decoders[4].TCON = frame_decoders[3].TCON -- Content type
 	frame_decoders[4].TCOP = frame_decoders[3].TCOP -- Copyright message
-	--frame_decoders[4].TDEN Encoding time
+	frame_decoders[4].TDEN = reader_timestamp ( "encoding time" ) -- Encoding time
 	frame_decoders[4].TDLY = frame_decoders[3].TDLY -- Playlist delay
-	--frame_decoders[4].TDOR Original release time
-	--frame_decoders[4].TDRC Recording time
-	--frame_decoders[4].TDRL Release time
-	--frame_decoders[4].TDTG Tagging time
+	frame_decoders[4].TDOR = reader_timestamp ( "original release time" ) -- Original release time
+	frame_decoders[4].TDRC = reader_timestamp ( "recording time" ) -- Recording time
+	frame_decoders[4].TDRL = reader_timestamp ( "release time" ) -- Release time
+	frame_decoders[4].TDTG = reader_timestamp ( "tagging time" ) -- Tagging time
 	frame_decoders[4].TENC = frame_decoders[3].TENC -- Encoded by
 	frame_decoders[4].TEXT = frame_decoders[3].TEXT -- Lyricist/Text writer
 	frame_decoders[4].TFLT = frame_decoders[3].TFLT -- File type
