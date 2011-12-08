@@ -39,7 +39,7 @@ local function get_from_string ( s , i )
 			n = #s - i
 		end
 		i = i + n
-		if i > #s then return error ( "Unable to read enough characters" ) end
+		assert ( i-1 <= #s , "Unable to read enough characters" )
 		return strsub ( s , i-n , i-1 )
 	end , function ( new_i )
 		if new_i then i = new_i end
