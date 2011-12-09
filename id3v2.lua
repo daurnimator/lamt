@@ -94,12 +94,15 @@ local function find ( fd )
 	return false
 end
 
-local function ununsynch ( s )
+local function ununsynch ( str )
 	--[[
-	s = strgsub ( s , "\255%z([224-\255])" ,  "\255%1" )
-	return strgsub ( s , "\255%z%z" ,  "\255\0" )
-	]]
-	return ( strgsub ( s , "\255%z(.)" , "\255%1" ) )
+	local replacements_special , replacements_nul
+	str , replacements_special = strgsub ( str , "\255%z([224-\255])" ,  "\255%1" )
+	str , replacements_nul = strgsub ( str , "\255%z%z" ,  "\255\0" )
+	print("Ununsynch, made " .. replacements_nul .. "," .. replacements_special .. " replacements" )
+	--]]
+	str = strgsub ( str , "\255%z(.)" , "\255%1" )
+	return str
 end
 
 local function get_frame ( get , version_major )
@@ -436,7 +439,12 @@ do -- v2
 	frame_decoders[2].TXT = reader_plain_text_frame ( "lyricist" ) -- Lyricist/text writer
 	--frame_decoders[2].TXX User defined text information frame
 	frame_decoders[2].TYE = reader_text_year_frame ( "date" ) -- Year
-	--frame_decoders[2].UFI Unique file identifier
+	frame_decoders[2].UFI = function ( s , tags ) -- Unique file identifier
+		local get = get_from_string ( s )
+		local owner = read_terminated_string ( get )
+		local data = get ( )
+		-- TODO: use data
+	end
 	--frame_decoders[2].ULT Unsychronized lyric/text transcription
 	frame_decoders[2].WAF = reader_plain_url_frame ( "file url" ) -- Official audio file webpage
 	frame_decoders[2].WAR = reader_plain_url_frame ( "artist url" ) -- Official artist/performer webpage
@@ -459,7 +467,15 @@ do -- v3
 	frame_decoders[3] = { }
 
 	frame_decoders[3].AENC = frame_decoders[2].CRA -- Audio encryption
-	--frame_decoders[3].APIC = -- Attached picture
+	frame_decoders[3].APIC = function ( s , tags ) -- Attached picture
+		local get = get_from_string ( s )
+		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
+		local mimetype = read_terminated_string ( get )
+		local picturetype = strbyte ( get ( 1 ) )
+		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
+		local data = get ( )
+		-- TODO: use data
+	end
 	frame_decoders[3].COMM = frame_decoders[2].COM -- Comments
 	--frame_decoders[3].COMR = -- Commercial frame
 	--frame_decoders[3].ENCR = -- Encryption method registration
@@ -650,7 +666,7 @@ local function read ( get , header , tags , extra )
 	extra.experimental = experimental
 
 	local tag = get ( header.size )
-	if unsynched then
+	if version_major == 2 and unsynched then
 		tag = ununsynch ( tag )
 	end
 
