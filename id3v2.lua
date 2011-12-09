@@ -118,16 +118,16 @@ local function get_frame ( get , version_major )
 		local size = read_synchsafe_integer ( get ( 4 ) )
 
 		local status_flags = get ( 1 ) -- 0abc0000
-		status_tag_alter_discard =     be_bpeek ( status_flags , 6 ) -- a
-		status_file_alter_discard =    be_bpeek ( status_flags , 5 ) -- b
-		status_read_only =             be_bpeek ( status_flags , 4 ) -- c
+		status_tag_alter_discard =     be_bpeek ( status_flags , 1 ) -- a
+		status_file_alter_discard =    be_bpeek ( status_flags , 2 ) -- b
+		status_read_only =             be_bpeek ( status_flags , 3 ) -- c
 
 		local format_flags = get ( 1 ) -- 0h00kmnp
-		local format_has_group_info =  be_bpeek ( format_flags , 6 ) -- h
-		format_zlib_compressed =       be_bpeek ( format_flags , 3 ) -- k
-		local format_encrypted =       be_bpeek ( format_flags , 2 ) -- m
-		format_unsynced =              be_bpeek ( format_flags , 1 ) -- n
-		local format_has_data_length = be_bpeek ( format_flags , 0 ) -- p
+		local format_has_group_info =  be_bpeek ( format_flags , 1 ) -- h
+		format_zlib_compressed =       be_bpeek ( format_flags , 4 ) -- k
+		local format_encrypted =       be_bpeek ( format_flags , 5 ) -- m
+		format_unsynced =              be_bpeek ( format_flags , 6 ) -- n
+		local format_has_data_length = be_bpeek ( format_flags , 7 ) -- p
 
 		if format_has_data_length then
 			decoded_length = read_synchsafe_integer ( get ( 4 ) )
@@ -147,14 +147,14 @@ local function get_frame ( get , version_major )
 		local size = be_uint_to_num ( get ( 4 ) )
 
 		local status_flags = get ( 1 ) -- abc00000
-		status_tag_alter_discard =     be_bpeek ( status_flags , 7 ) -- a
-		status_file_alter_discard =    be_bpeek ( status_flags , 6 ) -- b
-		status_read_only =             be_bpeek ( status_flags , 5 ) -- c
+		status_tag_alter_discard =     be_bpeek ( status_flags , 0 ) -- a
+		status_file_alter_discard =    be_bpeek ( status_flags , 1 ) -- b
+		status_read_only =             be_bpeek ( status_flags , 2 ) -- c
 
 		local format_flags = get ( 1 ) -- ijk00000
-		format_zlib_compressed =       be_bpeek ( format_flags , 7 ) -- k
-		local format_encrypted =       be_bpeek ( format_flags , 6 ) -- j
-		local format_has_group_info =  be_bpeek ( format_flags , 5 ) -- i
+		format_zlib_compressed =       be_bpeek ( format_flags , 0 ) -- k
+		local format_encrypted =       be_bpeek ( format_flags , 1 ) -- j
+		local format_has_group_info =  be_bpeek ( format_flags , 2 ) -- i
 
 		if format_zlib_compressed then
 			decoded_length = be_uint_to_num ( get ( 4 ) )
@@ -316,8 +316,8 @@ do -- v2
 	--frame_decoders[2].BUF Recommended buffer size
 	--frame_decoders[2].CNT Play counter
 	frame_decoders[2].COM = function ( s , tags ) --  Comments
-		local encoding = encodings [ strbyte ( s , 1 ) ]
 		local get = get_from_string ( s )
+		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
 		local language = get ( 3 )
 		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
 		local data = toutf8 ( get ( ) , encoding.name )
@@ -335,10 +335,6 @@ do -- v2
 	--frame_decoders[2].MLL MPEG location lookup table
 	--frame_decoders[2].PIC Attached picture
 	frame_decoders[2].POP = function ( s , tags ) -- Popularimeter
-		if strsub ( s , 1 , 3 ) == "\0\0\31" then -- WM9 seems to add a couple of null bytes.....
-			s = strsub ( s , 4 , -1 )
-		end
-
 		local get = get_from_string ( s )
 		local email = read_terminated_string ( get )
 		-- Note: email is ignored
@@ -355,12 +351,12 @@ do -- v2
 			local get = get_from_string ( s )
 
 			local inc_flags = get ( 1 )
-			local inc_right      = be_bpeek ( inc_flags , 0 )
-			local inc_left       = be_bpeek ( inc_flags , 1 )
-			local inc_right_back = be_bpeek ( inc_flags , 2 )
-			local inc_left_back  = be_bpeek ( inc_flags , 3 )
-			local inc_centre     = be_bpeek ( inc_flags , 4 )
-			local inc_bass       = be_bpeek ( inc_flags , 5 )
+			local inc_right      = be_bpeek ( inc_flags , 7 )
+			local inc_left       = be_bpeek ( inc_flags , 6 )
+			local inc_right_back = be_bpeek ( inc_flags , 5 )
+			local inc_left_back  = be_bpeek ( inc_flags , 4 )
+			local inc_centre     = be_bpeek ( inc_flags , 3 )
+			local inc_bass       = be_bpeek ( inc_flags , 2 )
 
 			local bits_used = strbyte ( get ( 1 ) )
 			local bytes_used = ceil ( bits_used / 8 )
@@ -449,8 +445,8 @@ do -- v2
 	frame_decoders[2].WCP = reader_plain_url_frame ( "copyright url" ) -- Copyright/Legal information
 	frame_decoders[2].WPB = reader_plain_url_frame ( "publisher url" ) -- Publishers official webpage
 	frame_decoders[2].WXX = function ( s , tags ) -- User defined URL link frame
-		local encoding = encodings [ strbyte ( s , 1 ) ]
 		local get = get_from_string ( s )
+		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
 		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
 		local url = get ( )
 
@@ -645,10 +641,11 @@ local function read ( get , header , tags , extra )
 	extra.version_major = header.version_major
 	extra.version_minor = header.version_minor
 
-	local unsynched =         be_bpeek ( header.flags , 7 )
-	local hasextendedheader = be_bpeek ( header.flags , 6 )
-	local experimental =      be_bpeek ( header.flags , 5 )
-	local footerpresent =     be_bpeek ( header.flags , 4 )
+	--%abcd0000
+	local unsynched =         be_bpeek ( header.flags , 0 ) -- a
+	local hasextendedheader = be_bpeek ( header.flags , 1 ) -- b
+	local experimental =      be_bpeek ( header.flags , 2 ) -- c
+	local footerpresent =     be_bpeek ( header.flags , 3 ) -- d
 
 	extra.experimental = experimental
 
