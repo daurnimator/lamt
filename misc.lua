@@ -37,7 +37,7 @@ local function get_from_string ( s , i )
 	i = i or 1
 	return function ( n )
 		if not n then -- Rest of string
-			n = #s - i
+			n = #s - i + 1
 		end
 		i = i + n
 		assert ( i-1 <= #s , "Unable to read enough characters" )
@@ -88,13 +88,13 @@ local function read_terminated_string ( get , terminators )
 end
 
 -- Explodes a string on seperator
-function strexplode ( str , seperator , plain )
+function strexplode ( str , seperator , plain , init )
 	if type ( seperator ) ~= "string" or seperator == "" then
 		error ( "Provide a valid seperator (a string of length >= 1)" )
 	end
 
 	local t , nexti = { } , 1
-	local pos = 1
+	local pos = init or 1
 	while true do
 		local st , sp = strfind ( str , seperator , pos , plain )
 		if not st then break end -- No more seperators found

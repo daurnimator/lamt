@@ -216,14 +216,25 @@ local function appendtag ( tags , field , value )
 	end
 end
 
+local function read_string ( get , encoding )
+	local s = read_terminated_string ( get , encoding.terminator )
+	if #encoding.terminator == 2 and #s % 2 == 1 then
+		s = s .. "\0"
+	end
+	return toutf8 ( s , encoding.name )
+end
+
 local function read_text_frame ( s )
 	local encoding = encodings [ strbyte ( s , 1 ) ]
 
 	local r = { }
-	local t = strexplode ( s , encoding.terminator , true )
+	local t = strexplode ( s , encoding.terminator , true , 2 )
 	for i , text in ipairs ( t ) do
+		if #encoding.terminator == 2 and #text % 2 == 1 then
+			text = text .. "\0"
+		end
 		if #text > 0 then
-			local text = toutf8 ( text , encoding.name )
+			text = toutf8 ( text , encoding.name )
 			tblinsert ( r , text )
 		end
 	end
@@ -322,7 +333,7 @@ do -- v2
 		local get = get_from_string ( s )
 		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
 		local language = get ( 3 )
-		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
+		local description = read_string ( get , encoding )
 		local data = toutf8 ( get ( ) , encoding.name )
 
 		appendtag ( tags , "comment" , data )
@@ -455,7 +466,7 @@ do -- v2
 	frame_decoders[2].WXX = function ( s , tags ) -- User defined URL link frame
 		local get = get_from_string ( s )
 		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
-		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
+		local description = read_string ( get , encoding )
 		local url = get ( )
 
 		local field = description .. " url"
@@ -472,7 +483,7 @@ do -- v3
 		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
 		local mimetype = read_terminated_string ( get )
 		local picturetype = strbyte ( get ( 1 ) )
-		local description = toutf8 ( read_terminated_string ( get , encoding.terminator ) , encoding.name )
+		local description = read_string ( get , encoding )
 		local data = get ( )
 		-- TODO: use data
 	end
