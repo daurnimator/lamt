@@ -253,10 +253,7 @@ local function reader_text_number_frame ( field )
 	return function ( s , tags )
 		for i , v in ipairs ( read_text_frame ( s ) ) do
 			local num = tonumber ( v )
-			if not num then
-				error ( "Not a number: " .. v )
-			end
-			appendtag ( tags , field , num )
+			appendtag ( tags , field , num or v )
 		end
 	end
 end
@@ -265,12 +262,16 @@ local function reader_text_numeric_part ( num_field , den_field )
 	return function ( s , tags )
 		for i , v in ipairs ( read_text_frame ( s ) ) do
 			local num , den = strmatch ( v , "^(%d+)/?(%d*)$" )
-			num = assert ( tonumber ( num ) , "Invalid numeric part" )
-			den = tonumber ( den )
+			if num then
+				num = tonumber ( num )
+				den = tonumber ( den )
 
-			appendtag ( tags , num_field , num )
-			if den then
-				appendtag ( tags , den_field , num )
+				appendtag ( tags , num_field , num )
+				if den then
+					appendtag ( tags , den_field , num )
+				end
+			else
+				appendtag ( tags , num_field , v )
 			end
 		end
 	end
@@ -419,7 +420,13 @@ do -- v2
 		end
 	end
 	frame_decoders[2].TCR = reader_plain_text_frame ( "copyright" ) -- Copyright message
-	--frame_decoders[2].TDA Date
+	frame_decoders[2].TDA = function ( s , tags ) -- Date
+		for i , v in ipairs ( read_text_frame ( s ) ) do
+			local day , month = strmatch ( v , "^(%d%d)(%d%d)$" )
+			local d = new_date ( { month = month , day = day } )
+			appendtag ( tags , "date" , d )
+		end
+	end
 	frame_decoders[2].TDY = reader_text_number_frame ( "audio delay" ) -- Playlist delay
 	frame_decoders[2].TEN = reader_plain_text_frame ( "encoder" ) -- Encoded by
 	frame_decoders[2].TFT = reader_plain_text_frame ( "file type" ) -- File type
@@ -448,7 +455,15 @@ do -- v2
 	frame_decoders[2].TT2 = reader_plain_text_frame ( "title" ) -- Title/Songname/Content description
 	frame_decoders[2].TT3 = reader_plain_text_frame ( "subtitle" ) -- Subtitle/Description refinement
 	frame_decoders[2].TXT = reader_plain_text_frame ( "lyricist" ) -- Lyricist/text writer
-	--frame_decoders[2].TXX User defined text information frame
+	frame_decoders[2].TXX = function ( s , tags ) --  User defined text information frame
+		local get = get_from_string ( s )
+		local encoding = encodings [ strbyte ( get ( 1 ) ) ]
+		local description = read_string ( get , encoding )
+		local value = get ( )
+
+		local field = description
+		appendtag ( tags , field , value )
+	end
 	frame_decoders[2].TYE = reader_text_year_frame ( "date" ) -- Year
 	frame_decoders[2].UFI = function ( s , tags ) -- Unique file identifier
 		local get = get_from_string ( s )
@@ -677,7 +692,7 @@ local function read ( get , header , tags , extra )
 	extra.experimental = experimental
 
 	local tag = get ( header.size )
-	if version_major == 2 and unsynched then
+	if unsynched and header.version_major == 2 then
 		tag = ununsynch ( tag )
 	end
 
